@@ -88,3 +88,34 @@ jobs:
           set -e
           cat scan.json
           jq -e '.findings[] | select(.title == "has install script")' scan.json
+
+  # Python packages from PyPI.
+  pypi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo build --release
+      - name: A harmless update of a wheel is clean
+        run: |
+          target/release/pkgsnitch diff pypi:idna 3.6 3.7 --format json > diff.json
+          cat diff.json
+          jq -e '.package == "idna" and .old == "3.6" and .new == "3.7"' diff.json
+          jq -e '.verdict == "info" or .verdict == "low"' diff.json
+      - name: scan of a wheel with dependencies
+        run: |
+          set +e
+          target/release/pkgsnitch scan pypi:requests==2.32.3 --format json > wheel.json
+          echo "exit status: $?"
+          set -e
+          cat wheel.json
+          jq -e '.package == "requests" and .new == "2.32.3"' wheel.json
+          jq -e '[.phases[] | .syscalls > 0] | all' wheel.json
+      - name: scan of a source distribution runs its build script
+        run: |
+          set +e
+          target/release/pkgsnitch scan pypi:docopt==0.6.2 --format json > sdist.json
+          echo "exit status: $?"
+          set -e
+          cat sdist.json
+          jq -e '.findings[] | select(.title == "has install script")' sdist.json

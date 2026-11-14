@@ -28,7 +28,7 @@ use crate::model::{Profile, Report, Severity};
 use crate::plan::{Level, Outcome, Plan, Update};
 use crate::profile::Cache;
 use crate::report::Format;
-use crate::sandbox::{Sandbox, Target};
+use crate::sandbox::{Ecosystem, Sandbox, Target};
 
 #[derive(Parser)]
 #[command(
@@ -171,7 +171,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             single(&old, &new, Mode::Update, &opts)
         }
         Cmd::Scan { package, opts } => single(
-            &Target::Baseline,
+            &Target::Baseline(Ecosystem::Npm),
             &scan_target(&package)?,
             Mode::Scan,
             &opts,
@@ -296,6 +296,9 @@ struct Session<'a> {
 impl Session<'_> {
     /// Observe both targets side by side and compare them.
     fn compare(&self, old: &Target, new: &Target, mode: Mode) -> Result<Report> {
+        // A scan is measured against the empty project of its own ecosystem.
+        let baseline = Target::Baseline(new.ecosystem());
+        let old = if mode == Mode::Scan { &baseline } else { old };
         let (before, after) = std::thread::scope(|scope| {
             let before = scope.spawn(|| self.profile(old));
             let after = self.profile(new);
@@ -317,6 +320,7 @@ impl Session<'_> {
         validate(&update.name, "package name")?;
         validate(&update.to, "version")?;
         let registry = |version: &str| Target::Registry {
+            ecosystem: Ecosystem::Npm,
             name: update.name.clone(),
             version: Some(version.to_string()),
         };
@@ -325,22 +329,29 @@ impl Session<'_> {
                 validate(from, "version")?;
                 self.compare(&registry(from), &registry(&update.to), Mode::Update)
             }
-            None => self.compare(&Target::Baseline, &registry(&update.to), Mode::Scan),
+            None => self.compare(
+                &Target::Baseline(Ecosystem::Npm),
+                &registry(&update.to),
+                Mode::Scan,
+            ),
         }
     }
 
     fn profile(&self, target: &Target) -> Result<Profile> {
         let label = target.label();
         // Only exact registry versions are immutable enough to cache.
+        let ecosystem = target.ecosystem();
         let key = match target {
-            Target::Baseline => Some(("", "baseline")),
+            Target::Baseline(_) => Some(("", "baseline")),
             Target::Registry {
                 name,
                 version: Some(v),
-            } if is_exact(v) => Some((name.as_str(), v.as_str())),
+                ..
+            } if is_exact(ecosystem, v) => Some((name.as_str(), v.as_str())),
             _ => None,
         };
-        if let Some(hit) = key.and_then(|(name, version)| self.cache.load(name, version)) {
+        if let Some(hit) = key.and_then(|(name, version)| self.cache.load(ecosystem, name, version))
+        {
             eprintln!("  {label}: cached");
             return Ok(hit);
         }
@@ -349,7 +360,7 @@ impl Session<'_> {
         let profile =
             profile::build(raw.dir.path()).with_context(|| format!("analyzing {label}"))?;
         if let Some((name, version)) = key {
-            if let Err(e) = self.cache.store(name, version, &profile) {
+            if let Err(e) = self.cache.store(ecosystem, name, version, &profile) {
                 eprintln!("  warning: could not cache the result: {e:#}");
             }
         }
@@ -360,12 +371,14 @@ impl Session<'_> {
 fn diff_targets(args: &[String]) -> Result<(Target, Target)> {
     match args {
         [old, new] if is_tarball(old) && is_tarball(new) => Ok((tarball(old)?, tarball(new)?)),
-        [name, old, new] => {
+        [package, old, new] => {
+            let (ecosystem, name) = split_ecosystem(package);
             validate(name, "package name")?;
             validate(old, "version")?;
             validate(new, "version")?;
             let registry = |v: &String| Target::Registry {
-                name: name.clone(),
+                ecosystem,
+                name: name.to_string(),
                 version: Some(v.clone()),
             };
             Ok((registry(old), registry(new)))
@@ -378,12 +391,18 @@ fn scan_target(arg: &str) -> Result<Target> {
     if is_tarball(arg) {
         return tarball(arg);
     }
-    let (name, version) = split_spec(arg);
+    let (ecosystem, spec) = split_ecosystem(arg);
+    // pip writes `name==version`; accept that as well as `name@version`.
+    let (name, version) = match spec.split_once("==") {
+        Some((name, version)) => (name, Some(version)),
+        None => split_spec(spec),
+    };
     validate(name, "package name")?;
     if let Some(v) = version {
         validate(v, "version")?;
     }
     Ok(Target::Registry {
+        ecosystem,
         name: name.to_string(),
         version: version.map(str::to_string),
     })
@@ -401,6 +420,15 @@ fn tarball(arg: &str) -> Result<Target> {
     Ok(Target::Tarball(path.to_path_buf()))
 }
 
+/// Split an optional `pypi:` or `npm:` prefix off a package argument.
+fn split_ecosystem(arg: &str) -> (Ecosystem, &str) {
+    if let Some(rest) = arg.strip_prefix("pypi:") {
+        (Ecosystem::PyPI, rest)
+    } else {
+        (Ecosystem::Npm, arg.strip_prefix("npm:").unwrap_or(arg))
+    }
+}
+
 /// Split `name@version`, keeping the leading `@` of scoped packages.
 fn split_spec(spec: &str) -> (&str, Option<&str>) {
     match spec.rfind('@') {
@@ -409,8 +437,15 @@ fn split_spec(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// `1.2.3`, `1.2.3-beta.1`: a concrete version rather than a tag or range.
-fn is_exact(version: &str) -> bool {
+/// A concrete version rather than a tag or range: `1.2.3` or `1.2.3-beta.1`
+/// for npm, anything like `2.32`, `3.7.1` or `1.0rc1` for PyPI.
+fn is_exact(ecosystem: Ecosystem, version: &str) -> bool {
+    if ecosystem == Ecosystem::PyPI {
+        return version.starts_with(|c: char| c.is_ascii_digit())
+            && version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.');
+    }
     let core = version.split(['-', '+']).next().unwrap_or("");
     let parts: Vec<&str> = core.split('.').collect();
     parts.len() == 3
@@ -451,11 +486,17 @@ mod tests {
 
     #[test]
     fn recognizes_exact_versions() {
-        assert!(is_exact("1.2.3"));
-        assert!(is_exact("1.2.3-beta.1"));
-        assert!(!is_exact("latest"));
-        assert!(!is_exact("^1.2.3"));
-        assert!(!is_exact("1.2"));
+        let npm = |v| is_exact(Ecosystem::Npm, v);
+        assert!(npm("1.2.3"));
+        assert!(npm("1.2.3-beta.1"));
+        assert!(!npm("latest"));
+        assert!(!npm("^1.2.3"));
+        assert!(!npm("1.2"));
+        let pypi = |v| is_exact(Ecosystem::PyPI, v);
+        assert!(pypi("3.7"));
+        assert!(pypi("1.0rc1"));
+        assert!(!pypi(">=3.7"));
+        assert!(!pypi("latest"));
     }
 
     #[test]
@@ -475,6 +516,7 @@ mod tests {
         assert_eq!(
             old,
             Target::Registry {
+                ecosystem: Ecosystem::Npm,
                 name: "left-pad".into(),
                 version: Some("1.2.0".into())
             }

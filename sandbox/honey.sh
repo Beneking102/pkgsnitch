@@ -27,6 +27,7 @@ EOF
 cp .ssh/id_ed25519 .ssh/id_rsa
 printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n' "$AWS_ID" "$CANARY" > .aws/credentials
 printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > .npmrc
+printf '[pypi]\nusername = __token__\npassword = pypi-%s\n' "$CANARY" > .pypirc
 printf 'https://honey:%s@github.com\n' "$GH_PAT" > .git-credentials
 printf 'github.com:\n  oauth_token: %s\n  user: honey\n' "$GH_OAUTH" > .config/gh/hosts.yml
 printf '{"auths":{"https://index.docker.io/v1/":{"identitytoken":"%s"}}}\n' "$CANARY" > .docker/config.json

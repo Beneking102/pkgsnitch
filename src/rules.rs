@@ -12,7 +12,9 @@ pub const WORK: &str = "/work";
 pub fn norm(s: &str) -> String {
     let s = s
         .replace("/work/node_modules/", "node_modules/")
+        .replace("/work/venv/", "venv/")
         .replace(HOME, "~");
+    let s = collapse_tmp(&s);
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -36,6 +38,26 @@ pub fn norm(s: &str) -> String {
         }
         i = j;
     }
+    out
+}
+
+/// Whatever sits directly under `/tmp` has a random name (build directories
+/// of npm and pip, Python's tempfile), so only its position is kept.
+fn collapse_tmp(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find("/tmp/") {
+        let (head, tail) = rest.split_at(at + "/tmp/".len());
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'')
+            .unwrap_or(tail.len());
+        if end > 0 {
+            out.push('*');
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
     out
 }
 
@@ -122,6 +144,8 @@ pub fn sensitive(path: &str) -> Option<(&'static str, Severity)> {
 pub fn write_expected(path: &str) -> bool {
     const ZONES: &[&str] = &[
         "/work/node_modules/",
+        "/work/venv/",
+        "/work/wheels/",
         "/tmp/",
         "/home/dev/.npm/",
         "/home/dev/.cache/",
@@ -256,8 +280,16 @@ mod tests {
             norm("/home/dev/.npm/_logs/2026-11-14T10_52_08_123Z"),
             "~/.npm/_logs/2026-11-14T10_52_08_123Z"
         );
-        assert_eq!(norm("/tmp/build-9f8e7d6c5b4a"), "/tmp/build-*");
-        assert_eq!(norm("/tmp/pid-123456.lock"), "/tmp/pid-*.lock");
+        assert_eq!(norm("/tmp/build-9f8e7d6c5b4a"), "/tmp/*");
+        assert_eq!(
+            norm("/tmp/pip-build-env-k3x9_qzt/overlay/bin/python setup.py /tmp/tmpab12cd34"),
+            "/tmp/*/overlay/bin/python setup.py /tmp/*"
+        );
+        assert_eq!(norm("cache-9f8e7d6c5b4a.lock"), "cache-*.lock");
+        assert_eq!(
+            norm("/work/venv/lib/python3.11/site-packages/x.pth"),
+            "venv/lib/python3.11/site-packages/x.pth"
+        );
         assert_eq!(
             norm("node feedback.js --port 8080"),
             "node feedback.js --port 8080"

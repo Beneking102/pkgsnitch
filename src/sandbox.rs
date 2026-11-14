@@ -20,17 +20,37 @@ const ASSETS: &[(&str, &str)] = &[
     ("fetch.sh", include_str!("../sandbox/fetch.sh")),
     ("trace.sh", include_str!("../sandbox/trace.sh")),
     ("honey.sh", include_str!("../sandbox/honey.sh")),
+    ("pyfetch.py", include_str!("../sandbox/pyfetch.py")),
+    ("pymodules.py", include_str!("../sandbox/pymodules.py")),
 ];
 
 /// Where a copied-in tarball lives inside the sandbox.
 const TARBALL: &str = "/tmp/pkgsnitch-target.tgz";
 
+/// A package ecosystem pkgsnitch can observe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ecosystem {
+    Npm,
+    PyPI,
+}
+
+impl Ecosystem {
+    /// The name used on the command line, in the sandbox and in the cache.
+    pub fn id(self) -> &'static str {
+        match self {
+            Ecosystem::Npm => "npm",
+            Ecosystem::PyPI => "pypi",
+        }
+    }
+}
+
 /// What to observe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    /// An empty project: everything npm and node do on their own.
-    Baseline,
+    /// An empty project: everything the package manager does on its own.
+    Baseline(Ecosystem),
     Registry {
+        ecosystem: Ecosystem,
         name: String,
         version: Option<String>,
     },
@@ -39,18 +59,44 @@ pub enum Target {
 }
 
 impl Target {
+    pub fn ecosystem(&self) -> Ecosystem {
+        match self {
+            Target::Baseline(ecosystem) | Target::Registry { ecosystem, .. } => *ecosystem,
+            Target::Tarball(_) => Ecosystem::Npm,
+        }
+    }
+
     pub fn label(&self) -> String {
         match self {
-            Target::Baseline => "empty baseline".into(),
+            Target::Baseline(_) => "empty baseline".into(),
             Target::Registry {
+                ecosystem: Ecosystem::PyPI,
+                ..
+            } => format!("pypi:{}", self.spec()),
+            Target::Registry { .. } => self.spec(),
+            Target::Tarball(path) => path.display().to_string(),
+        }
+    }
+
+    /// The requirement as the ecosystem's own installer writes it.
+    fn spec(&self) -> String {
+        match self {
+            Target::Registry {
+                name,
+                version: None,
+                ..
+            } => name.clone(),
+            Target::Registry {
+                ecosystem: Ecosystem::Npm,
                 name,
                 version: Some(v),
             } => format!("{name}@{v}"),
             Target::Registry {
+                ecosystem: Ecosystem::PyPI,
                 name,
-                version: None,
-            } => name.clone(),
-            Target::Tarball(path) => path.display().to_string(),
+                version: Some(v),
+            } => format!("{name}=={v}"),
+            Target::Baseline(_) | Target::Tarball(_) => String::new(),
         }
     }
 }
@@ -120,16 +166,9 @@ impl Sandbox {
         let id = container.id.as_str();
         let timeout = self.timeout.to_string();
 
+        let ecosystem = target.ecosystem().id();
         let spec = match target {
-            Target::Baseline => String::new(),
-            Target::Registry {
-                name,
-                version: Some(v),
-            } => format!("{name}@{v}"),
-            Target::Registry {
-                name,
-                version: None,
-            } => name.clone(),
+            Target::Baseline(_) | Target::Registry { .. } => target.spec(),
             Target::Tarball(path) => {
                 // Streamed in as the sandbox user: `docker cp` would keep the
                 // host's file owner, which the capability-less container
@@ -162,6 +201,7 @@ impl Sandbox {
             "dev",
             id,
             "/opt/pkgsnitch/fetch.sh",
+            ecosystem,
             &spec,
         ])
         .with_context(|| format!("could not fetch {}", target.label()))?;
@@ -169,15 +209,7 @@ impl Sandbox {
         // Secure what the fetch recorded, and plant the honeytokens, before
         // any package code runs: /probe is writable by root only.
         self.run(&[
-            "exec",
-            "--user",
-            "root",
-            id,
-            "cp",
-            "/out/name",
-            "/out/lock.json",
-            "/out/manifest.json",
-            "/probe/",
+            "exec", "--user", "root", id, "cp", "-r", "/out/.", "/probe/",
         ])?;
         self.run(&["exec", "--user", "dev", id, "/opt/pkgsnitch/honey.sh"])?;
 
@@ -216,6 +248,7 @@ impl Sandbox {
                 "/opt/pkgsnitch/trace.sh",
                 &timeout,
                 phase,
+                ecosystem,
             ])
         };
         trace("install")?;

@@ -13,6 +13,7 @@ use crate::canary;
 use crate::extract::{self, Behaviors};
 use crate::model::{Behavior, Kind, Manifest, Observed, Phase, PhaseStat, Profile};
 use crate::rules;
+use crate::sandbox::Ecosystem;
 
 const PHASES: [Phase; 2] = [Phase::Install, Phase::Import];
 const LIFECYCLE: [&str; 3] = ["preinstall", "install", "postinstall"];
@@ -184,11 +185,15 @@ fn manifest(package_json: &Value, lock: &Value, name: &str) -> Manifest {
     }
     let packages = lock.get("packages").and_then(Value::as_object);
     for (path, info) in packages.into_iter().flatten() {
-        // Keys look like `node_modules/a/node_modules/@scope/b`.
-        let Some(at) = path.rfind("node_modules/") else {
+        // npm keys look like `node_modules/a/node_modules/@scope/b`, with an
+        // empty key for the project itself; other ecosystems use plain names.
+        if path.is_empty() {
             continue;
+        }
+        let dep = match path.rfind("node_modules/") {
+            Some(at) => &path[at + "node_modules/".len()..],
+            None => path.as_str(),
         };
-        let dep = &path[at + "node_modules/".len()..];
         if dep == name {
             continue;
         }
@@ -220,7 +225,7 @@ impl Cache {
         }
     }
 
-    fn path(&self, name: &str, version: &str) -> Option<PathBuf> {
+    fn path(&self, ecosystem: Ecosystem, name: &str, version: &str) -> Option<PathBuf> {
         let safe = |s: &str| {
             if s.is_empty() {
                 "_baseline".to_string()
@@ -231,19 +236,25 @@ impl Cache {
         Some(
             self.root
                 .as_ref()?
-                .join("npm")
+                .join(ecosystem.id())
                 .join(safe(name))
                 .join(format!("{}-{}.json", safe(version), self.key)),
         )
     }
 
-    pub fn load(&self, name: &str, version: &str) -> Option<Profile> {
-        let text = fs::read_to_string(self.path(name, version)?).ok()?;
+    pub fn load(&self, ecosystem: Ecosystem, name: &str, version: &str) -> Option<Profile> {
+        let text = fs::read_to_string(self.path(ecosystem, name, version)?).ok()?;
         serde_json::from_str(&text).ok()
     }
 
-    pub fn store(&self, name: &str, version: &str, profile: &Profile) -> Result<()> {
-        let Some(path) = self.path(name, version) else {
+    pub fn store(
+        &self,
+        ecosystem: Ecosystem,
+        name: &str,
+        version: &str,
+        profile: &Profile,
+    ) -> Result<()> {
+        let Some(path) = self.path(ecosystem, name, version) else {
             return Ok(());
         };
         if let Some(parent) = path.parent() {
