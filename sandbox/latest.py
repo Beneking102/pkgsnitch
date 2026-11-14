@@ -85,11 +85,24 @@ def nuget(name):
     return newest(data["versions"])
 
 
+MAVEN_REPOSITORIES = (
+    "https://repo1.maven.org/maven2",           # Maven Central
+    "https://dl.google.com/android/maven2",     # Android and androidx
+    "https://plugins.gradle.org/m2",            # Gradle plugins
+)
+
+
 def maven(name):
     group, artifact = name.split(":", 1)
-    xml = get(f"https://repo1.maven.org/maven2/{group.replace('.', '/')}/{artifact}/maven-metadata.xml")
-    # `<release>` may name a release candidate; prefer the newest plain one.
-    return newest(re.findall(r"<version>([^<]+)</version>", xml))
+    path = f"{group.replace('.', '/')}/{artifact}/maven-metadata.xml"
+    for repository in MAVEN_REPOSITORIES:
+        try:
+            xml = get(f"{repository}/{path}")
+        except Exception:
+            continue
+        # `<release>` may name a release candidate; prefer the newest plain one.
+        return newest(re.findall(r"<version>([^<]+)</version>", xml))
+    return None
 
 
 def vcpkg(name):

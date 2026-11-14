@@ -379,13 +379,22 @@ fn coordinate(text: &str) -> Option<Pinned> {
 /// Java: a Gradle version catalog (`libs.versions.toml`). Libraries name a
 /// module and either a version or a reference into `[versions]`.
 fn version_catalog(text: &str) -> Vec<Pinned> {
-    fn quoted<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-        let rest = &line[line.find(key)? + key.len()..];
-        let rest = rest
-            .trim_start()
-            .strip_prefix('=')?
-            .trim_start()
-            .strip_prefix('"')?;
+    /// The string assigned to `key` in an inline table. The key must stand
+    /// alone: a library called `jackson-module-kotlin` is not a `module`.
+    fn quoted<'a>(table: &'a str, key: &str) -> Option<&'a str> {
+        let part_of_word = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.');
+        table.match_indices(key).find_map(|(at, _)| {
+            if table[..at].ends_with(part_of_word) {
+                return None;
+            }
+            let rest = table[at + key.len()..].trim_start().strip_prefix('=')?;
+            let rest = rest.trim_start().strip_prefix('"')?;
+            Some(&rest[..rest.find('"')?])
+        })
+    }
+    /// A value that is a plain string, ignoring a comment after it.
+    fn string(value: &str) -> Option<&str> {
+        let rest = value.strip_prefix('"')?;
         Some(&rest[..rest.find('"')?])
     }
     let mut versions: Vec<(&str, &str)> = Vec::new();
@@ -406,30 +415,27 @@ fn version_catalog(text: &str) -> Vec<Pinned> {
             };
             let (key, value) = (key.trim(), value.trim());
             if pass == "[versions]" {
-                if let Some(version) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+                if let Some(version) = string(value) {
                     versions.push((key, version));
                 }
                 continue;
             }
             // `name = "group:artifact:1.2.3"`
-            if let Some(found) = value
-                .strip_prefix('"')
-                .and_then(|v| coordinate(v.trim_end_matches('"')))
-            {
+            if let Some(found) = string(value).and_then(coordinate) {
                 pins.push(found);
                 continue;
             }
-            let module = quoted(line, "module").map(str::to_string).or_else(|| {
+            let module = quoted(value, "module").map(str::to_string).or_else(|| {
                 Some(format!(
                     "{}:{}",
-                    quoted(line, "group")?,
-                    quoted(line, "name")?
+                    quoted(value, "group")?,
+                    quoted(value, "name")?
                 ))
             });
-            let version = quoted(line, "version.ref")
+            let version = quoted(value, "version.ref")
                 .and_then(|name| versions.iter().find(|(key, _)| *key == name))
                 .map(|(_, version)| *version)
-                .or_else(|| quoted(line, "version"));
+                .or_else(|| quoted(value, "version"));
             if let (Some(module), Some(version)) = (module, version) {
                 if version.starts_with(|c: char| c.is_ascii_digit()) {
                     pins.push(pin(Registry::Maven, &module, version, Some(true)));
@@ -642,7 +648,7 @@ mod tests {
             ]
         );
 
-        let catalog = "[versions]\nkotlin = \"2.0.0\"\nokhttp = \"4.12.0\"\nranged = { strictly = \"1.0\" }\n\n[libraries]\nkotlin-stdlib = { module = \"org.jetbrains.kotlin:kotlin-stdlib\", version.ref = \"kotlin\" }\nokhttp = { group = \"com.squareup.okhttp3\", name = \"okhttp\", version.ref = \"okhttp\" }\nguava = \"com.google.guava:guava:33.2.1-jre\"\ngson = { module = \"com.google.code.gson:gson\", version = \"2.11.0\" }\nbom-managed = { module = \"org.example:no-version\" }\n\n[plugins]\nkotlin-jvm = { id = \"org.jetbrains.kotlin.jvm\", version.ref = \"kotlin\" }\n";
+        let catalog = "[versions]\nkotlin = \"2.0.0\" # keep in sync\nokhttp = \"4.12.0\"\nranged = { strictly = \"1.0\" }\n\n[libraries]\nkotlin-stdlib = { module = \"org.jetbrains.kotlin:kotlin-stdlib\", version.ref = \"kotlin\" }\nokhttp = { group = \"com.squareup.okhttp3\", name = \"okhttp\", version.ref = \"okhttp\" }\nguava = \"com.google.guava:guava:33.2.1-jre\"\ngson = { module = \"com.google.code.gson:gson\", version = \"2.11.0\" }\nkotlin-module-name = { module = \"org.jetbrains.kotlin:kotlin-reflect\", version.ref = \"kotlin\" }\nbom-managed = { module = \"org.example:no-version\" }\n\n[plugins]\nkotlin-jvm = { id = \"org.jetbrains.kotlin.jvm\", version.ref = \"kotlin\" }\n";
         assert_eq!(
             found("libs.versions.toml", catalog),
             [
@@ -650,6 +656,7 @@ mod tests {
                 entry("com.squareup.okhttp3:okhttp", "4.12.0", Some(true)),
                 entry("com.google.guava:guava", "33.2.1-jre", Some(true)),
                 entry("com.google.code.gson:gson", "2.11.0", Some(true)),
+                entry("org.jetbrains.kotlin:kotlin-reflect", "2.0.0", Some(true)),
             ]
         );
     }

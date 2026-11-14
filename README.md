@@ -61,7 +61,7 @@ pkgsnitch outdated                    # every dependency file in this directory
 pkgsnitch outdated --recursive --fail-if major
 ```
 
-Lists pinned versions that are behind their registry's latest stable release, biggest gaps first. It reads `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `requirements.txt`, `poetry.lock`, `uv.lock`, `composer.lock`, `Cargo.lock`, `go.mod`, `Gemfile.lock`, `packages.lock.json`, `*.csproj`, `pom.xml`, `gradle.lockfile`, `vcpkg.json`, `conanfile.txt` and `conan.lock`. `--fail-if patch|minor|major` turns it into a pipeline gate. No package code runs for this command.
+Lists pinned versions that are behind their registry's latest stable release, biggest gaps first. It reads `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `requirements.txt`, `poetry.lock`, `uv.lock`, `composer.lock`, `Cargo.lock`, `go.mod`, `Gemfile.lock`, `packages.lock.json`, `*.csproj`, `Directory.Packages.props`, `pom.xml`, `build.gradle(.kts)`, `gradle.lockfile`, `libs.versions.toml`, `vcpkg.json`, `conanfile.txt` and `conan.lock`. `--fail-if patch|minor|major` turns it into a pipeline gate. No package code runs for this command.
 
 For npm and Python, `pkgsnitch updates` goes further: it runs the behavioral diff for every newer version and prints a plan.
 
@@ -107,7 +107,7 @@ A rating says how alarming it is for a package to *start* doing something. A too
 - **It observes, it does not prove.** Code that waits for a date, checks for CI, or triggers only on a specific call stays quiet in a short run. A clean report means "nothing new was observed", not "safe".
 - **Only install and import are exercised.** With the network cut, an install script that downloads a binary fails there: the attempt is reported, what the binary would do is not. Requests inside TLS are seen as a connection to a host, not by content.
 - **Sandbox detection is possible**, and a container is not a hard boundary against kernel exploits. Run pkgsnitch where that is acceptable, such as a CI runner.
-- **The sandbox covers npm and Python.** For the other ecosystems pkgsnitch reports outdated versions only. A Python package without a wheel is installed without its dependencies.
+- **The sandbox covers npm and Python.** For the other ecosystems pkgsnitch reports outdated versions only, and only versions written in the files: what a Maven parent, a BOM or the vcpkg baseline decides is not there to read. A Python package without a wheel is installed without its dependencies.
 
 To try it without Docker, replay the recorded demo: `cargo run -- compare-dirs tests/fixtures/demo-old tests/fixtures/demo-new --explain`. The demo packages in `demo/` are harmless by construction. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
