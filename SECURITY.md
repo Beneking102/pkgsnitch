@@ -6,7 +6,7 @@ pkgsnitch runs code that may be hostile, so its own weaknesses matter.
 
 Please report privately through GitHub's
 [security advisories](https://github.com/Beneking102/pkgsnitch/security/advisories/new)
-rather than a public issue. Include what you observed and how to reproduce it.
+rather than a public issue, with what you observed and how to reproduce it.
 
 Things that count:
 
@@ -17,10 +17,11 @@ Things that count:
 
 ## Threat model
 
-The sandbox is a Docker container with every capability dropped,
-`no-new-privileges`, process and memory limits, and no network while package
-code runs. That stops ordinary malware. It is not a guarantee against a
-kernel or container-runtime exploit: run pkgsnitch where that residual risk
-is acceptable, such as a CI runner or a virtual machine.
+The observed package runs as an unprivileged user in a Docker container,
+with no capabilities, `no-new-privileges`, process and memory limits, and no
+network. The tracer runs as root in the same container and writes its
+evidence where that user cannot.
 
-Known gaps are listed under "Limits" in the [README](README.md#limits).
+This stops ordinary malware. It is not a guarantee against a kernel or
+container-runtime exploit: run pkgsnitch where that residual risk is
+acceptable, such as a CI runner or a virtual machine.
