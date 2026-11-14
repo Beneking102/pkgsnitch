@@ -4,7 +4,9 @@ _by [Bene Pankratz (@Beneking102)](https://github.com/Beneking102) · [benedikt-
 
 **See what a dependency update actually does before you take it.** pkgsnitch runs the old and the new version of a package in a sandbox, watches both, and reports what the new one does that the old one did not. It also tells you which of your pinned versions are behind, in ten ecosystems.
 
-![pkgsnitch reporting a simulated hijacked patch release](docs/demo.svg)
+![A pkgsnitch session: outdated versions in ten ecosystems, a hijacked release caught with its evidence, and a tested patch plan](docs/demo.svg)
+
+_A real session against Docker. Pauses while containers run are shortened._
 
 A source diff shows what changed in the code. pkgsnitch shows what changed in the behavior: this patch release now reads `~/.ssh/id_rsa`, contacts a new host and runs `curl`. That is the signal of a hijacked package, and a version bump in a lockfile hides it.
 
