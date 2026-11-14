@@ -12,7 +12,7 @@ RUN useradd --create-home --uid 1500 --shell /bin/bash dev \
  && mkdir -p /work /out /probe /opt/pkgsnitch \
  && chown dev:dev /work /out
 
-COPY probe.js fetch.sh trace.sh honey.sh pyfetch.py pymodules.py /opt/pkgsnitch/
+COPY probe.js fetch.sh trace.sh honey.sh pyfetch.py pymodules.py pyversions.py /opt/pkgsnitch/
 RUN chmod 0555 /opt/pkgsnitch/*.sh
 
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
