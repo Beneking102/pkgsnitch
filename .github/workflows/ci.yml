@@ -142,6 +142,8 @@ jobs:
           jq -e '.findings[] | select(.title == "exfiltrates secret" and (.target | startswith("HTTP request")))' hijack.json
           jq -e '.findings[] | select(.title == "exfiltrates secret" and (.target | startswith("DNS lookup")))' hijack.json
           jq -e '.findings[] | select(.title == "runs command" and (.target | startswith("curl ")))' hijack.json
+          # The module must really be imported: its lookup happens at import time.
+          jq -e '.findings[] | select(.phase == "import" and .title == "DNS lookup" and (.target | startswith("telemetry.")))' hijack.json
       - name: An unchanged Python release must be clean
         run: |
           target/release/pkgsnitch diff \

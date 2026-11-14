@@ -13,10 +13,24 @@ import re
 import sys
 
 wanted = sys.argv[1] or "pkgsnitch-baseline"
+SITE = "/work/venv/lib/python*/site-packages"
 
 
 def normalize(name):
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def declared_name(info):
+    # Wheels leave a `.dist-info` with METADATA; a source distribution
+    # installed the old way leaves an `.egg-info` with PKG-INFO.
+    for metadata in ("METADATA", "PKG-INFO"):
+        path = os.path.join(info, metadata)
+        if os.path.isfile(path):
+            with open(path, errors="replace") as handle:
+                for line in handle:
+                    if line.lower().startswith("name:"):
+                        return line[5:].strip()
+    return ""
 
 
 def modules(info):
@@ -26,18 +40,18 @@ def modules(info):
             return [line.strip() for line in handle if line.strip()]
     # No top_level.txt: derive the names from the list of installed files.
     names = []
-    with open(os.path.join(info, "RECORD")) as handle:
-        for line in handle:
-            first = line.split(",")[0].split("/")[0]
-            name = first[:-3] if first.endswith(".py") else first
-            if name.isidentifier() and name not in names and "." not in first.replace(".py", ""):
-                names.append(name)
+    record = os.path.join(info, "RECORD")
+    if os.path.exists(record):
+        with open(record) as handle:
+            for line in handle:
+                first = line.split(",")[0].split("/")[0]
+                name = first[:-3] if first.endswith(".py") else first
+                if name.isidentifier() and name not in names:
+                    names.append(name)
     return names
 
 
-for info in glob.glob("/work/venv/lib/python*/site-packages/*.dist-info"):
-    with open(os.path.join(info, "METADATA"), errors="replace") as handle:
-        declared = next((line[5:].strip() for line in handle if line.lower().startswith("name:")), "")
-    if normalize(declared) == wanted:
+for info in sorted(glob.glob(f"{SITE}/*.dist-info") + glob.glob(f"{SITE}/*.egg-info")):
+    if os.path.isdir(info) and normalize(declared_name(info)) == wanted:
         print(" ".join(m for m in modules(info) if m.isidentifier()))
         break
