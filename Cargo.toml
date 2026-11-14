@@ -10,6 +10,9 @@ repository = "https://github.com/Beneking102/pkgsnitch"
 readme = "README.md"
 keywords = ["security", "supply-chain", "npm", "sandbox", "diff"]
 categories = ["command-line-utilities", "development-tools"]
+# The crate holds what is needed to build the binary. Recorded traces, the
+# demo packages and the CI and watch setup stay in the repository.
+exclude = ["tests/", "demo/", "docs/", "watch/", ".github/", "action.yml"]
 
 [dependencies]
 anstream = "0.6"
