@@ -1,5 +1,5 @@
 name: pkgsnitch
-description: Behavioral diff for dependency updates. Flags pull requests whose new package versions start reading secrets, phoning home or running new commands.
+description: "Behavioral diff for dependency updates: flags new versions that read secrets, phone home or run new commands."
 author: Bene Pankratz
 branding:
   icon: shield
