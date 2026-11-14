@@ -2,6 +2,12 @@
 
 _by [Bene Pankratz (@Beneking102)](https://github.com/Beneking102) · [benedikt-pkr.info](https://benedikt-pkr.info)_
 
+[![CI](https://github.com/Beneking102/pkgsnitch/actions/workflows/ci.yml/badge.svg)](https://github.com/Beneking102/pkgsnitch/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Beneking102/pkgsnitch)](https://github.com/Beneking102/pkgsnitch/releases/latest)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-pkgsnitch-blue?logo=github)](https://github.com/marketplace/actions/pkgsnitch)
+[![Weekly watch](https://img.shields.io/badge/weekly%20watch-100%20packages-2f7d4f)](https://beneking102.github.io/pkgsnitch/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+
 **See what a dependency update actually does before you take it.** pkgsnitch runs the old and the new version of a package in a sandbox, watches both, and reports what the new one does that the old one did not. It also tells you which of your pinned versions are behind, in ten ecosystems.
 
 ![A pkgsnitch session: outdated versions in ten ecosystems, a hijacked release caught with its evidence, and a tested patch plan](docs/demo.svg)
