@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  # The real thing: build the sandbox and catch the simulated hijack.
+  end-to-end:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo build --release
+      - name: Pack the demo pair
+        run: |
+          (cd demo/1.0.0 && npm pack)
+          (cd demo/1.0.1 && npm pack)
+      - name: The hijacked release must be flagged as critical
+        run: |
+          set +e
+          target/release/pkgsnitch diff --format json \
+            demo/1.0.0/pkgsnitch-demo-leftpad-1.0.0.tgz \
+            demo/1.0.1/pkgsnitch-demo-leftpad-1.0.1.tgz > report.json
+          status=$?
+          cat report.json
+          test "$status" -eq 1
+          test "$(jq -r .verdict report.json)" = critical
+      - name: An unchanged release must be clean
+        run: |
+          target/release/pkgsnitch diff \
+            demo/1.0.0/pkgsnitch-demo-leftpad-1.0.0.tgz \
+            demo/1.0.0/pkgsnitch-demo-leftpad-1.0.0.tgz

@@ -1,0 +1,4 @@
+# Scripts are embedded into the binary and run inside a Linux container,
+# so they must keep LF line endings on every platform.
+* text=auto eol=lf
+*.tgz binary
