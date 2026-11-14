@@ -13,7 +13,7 @@ printf '{"name":"pkgsnitch-probe","version":"0.0.0","private":true}\n' > package
 
 name=""
 if [ -n "$spec" ]; then
-    npm install --ignore-scripts --no-audit --no-fund --loglevel=error -- "$spec"
+    timeout -k 5 300 npm install --ignore-scripts --no-audit --no-fund --loglevel=error -- "$spec"
     # npm recorded the package's real name as our only direct dependency.
     name=$(node -p 'Object.keys(require("/work/package.json").dependencies || {})[0] || ""')
 fi

@@ -1,0 +1,27 @@
+8819  execve("/usr/bin/node", ["node", "-e", "\nconst done = () => setTimeout(() => process.exit(0), 1500);\nimport(process.argv[1]).then(done, done);\n", "pkgsnitch-demo-leftpad"], 0x7ffeb56627c0 /* 21 vars */) = 0
+8819  openat(AT_FDCWD</work>, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3</etc/ld.so.cache>
+8819  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libdl.so.2", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libdl.so.2>
+8819  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libstdc++.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33>
+8819  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libm.so.6>
+8819  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libgcc_s.so.1", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libgcc_s.so.1>
+8819  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libpthread.so.0", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libpthread.so.0>
+8819  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libc.so.6>
+8819  openat(AT_FDCWD</work>, "/etc/ssl/openssl.cnf", O_RDONLY) = 3</etc/ssl/openssl.cnf>
+8819  openat(AT_FDCWD</work>, "/proc/version_signature", O_RDONLY|O_CLOEXEC) = 4</proc/version_signature>
+8819  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c57e9dff990, parent_tid=0x7c57e9dff990, exit_signal=0, stack=0x7c57e95ff000, stack_size=0x7ffe40, tls=0x7c57e9dff6c0} => {parent_tid=[8820]}, 88) = 8820
+8819  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c57e95fe990, parent_tid=0x7c57e95fe990, exit_signal=0, stack=0x7c57e8dfe000, stack_size=0x7ffe40, tls=0x7c57e95fe6c0} => {parent_tid=[8821]}, 88) = 8821
+8819  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c57e8dfd990, parent_tid=0x7c57e8dfd990, exit_signal=0, stack=0x7c57e85fd000, stack_size=0x7ffe40, tls=0x7c57e8dfd6c0} => {parent_tid=[8822]}, 88) = 8822
+8819  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c57e3fff990, parent_tid=0x7c57e3fff990, exit_signal=0, stack=0x7c57e37ff000, stack_size=0x7ffe40, tls=0x7c57e3fff6c0} => {parent_tid=[8823]}, 88) = 8823
+8819  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c57e37fe990, parent_tid=0x7c57e37fe990, exit_signal=0, stack=0x7c57e2ffe000, stack_size=0x7ffe40, tls=0x7c57e37fe6c0} => {parent_tid=[8824]}, 88) = 8824
+8819  openat(AT_FDCWD</work>, "/proc/self/cgroup", O_RDONLY|O_CLOEXEC) = 20</proc/8819/cgroup>
+8819  openat(AT_FDCWD</work>, "/sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.max", O_RDONLY|O_CLOEXEC) = 20</sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.max>
+8819  openat(AT_FDCWD</work>, "/sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.high", O_RDONLY|O_CLOEXEC) = 20</sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.high>
+8819  openat(AT_FDCWD</work>, "/proc/meminfo", O_RDONLY|O_CLOEXEC) = 20</proc/meminfo>
+8819  openat(AT_FDCWD</work>, "/proc/self/maps", O_RDONLY|O_CLOEXEC) = 20</proc/8819/maps>
+8819  openat(AT_FDCWD</work>, "/proc/self/maps", O_RDONLY) = 20</proc/8819/maps>
+8819  openat(AT_FDCWD</work>, "/proc/self/maps", O_RDONLY) = 20</proc/8819/maps>
+8819  openat(AT_FDCWD</work>, "/usr/bin/node", O_RDONLY) = 20</usr/bin/node>
+8819  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c57ea48f990, parent_tid=0x7c57ea48f990, exit_signal=0, stack=0x7c57ea487000, stack_size=0x7e40, tls=0x7c57ea48f6c0} => {parent_tid=[8825]}, 88) = 8825
+8819  openat(AT_FDCWD</work>, "/work/package.json", O_RDONLY|O_CLOEXEC) = 20</work/package.json>
+8819  openat(AT_FDCWD</work>, "/work/node_modules/pkgsnitch-demo-leftpad/package.json", O_RDONLY|O_CLOEXEC) = 20</work/node_modules/pkgsnitch-demo-leftpad/package.json>
+8819  openat(AT_FDCWD</work>, "/work/node_modules/pkgsnitch-demo-leftpad/index.js", O_RDONLY|O_CLOEXEC) = 20</work/node_modules/pkgsnitch-demo-leftpad/index.js>

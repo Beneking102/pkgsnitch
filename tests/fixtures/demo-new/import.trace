@@ -1,0 +1,47 @@
+8891  execve("/usr/bin/node", ["node", "-e", "\nconst done = () => setTimeout(() => process.exit(0), 1500);\nimport(process.argv[1]).then(done, done);\n", "pkgsnitch-demo-leftpad"], 0x7fff2e419270 /* 21 vars */) = 0
+8891  openat(AT_FDCWD</work>, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3</etc/ld.so.cache>
+8891  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libdl.so.2", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libdl.so.2>
+8891  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libstdc++.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33>
+8891  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libm.so.6>
+8891  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libgcc_s.so.1", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libgcc_s.so.1>
+8891  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libpthread.so.0", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libpthread.so.0>
+8891  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib/x86_64-linux-gnu/libc.so.6>
+8891  openat(AT_FDCWD</work>, "/etc/ssl/openssl.cnf", O_RDONLY) = 3</etc/ssl/openssl.cnf>
+8891  openat(AT_FDCWD</work>, "/proc/version_signature", O_RDONLY|O_CLOEXEC) = 4</proc/version_signature>
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c0c5ff990, parent_tid=0x7c5c0c5ff990, exit_signal=0, stack=0x7c5c0bdff000, stack_size=0x7ffe40, tls=0x7c5c0c5ff6c0} => {parent_tid=[8892]}, 88) = 8892
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c0bdfe990, parent_tid=0x7c5c0bdfe990, exit_signal=0, stack=0x7c5c0b5fe000, stack_size=0x7ffe40, tls=0x7c5c0bdfe6c0} => {parent_tid=[8893]}, 88) = 8893
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c0b5fd990, parent_tid=0x7c5c0b5fd990, exit_signal=0, stack=0x7c5c0adfd000, stack_size=0x7ffe40, tls=0x7c5c0b5fd6c0} => {parent_tid=[8894]}, 88) = 8894
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c0adfc990, parent_tid=0x7c5c0adfc990, exit_signal=0, stack=0x7c5c0a5fc000, stack_size=0x7ffe40, tls=0x7c5c0adfc6c0} => {parent_tid=[8895]}, 88) = 8895
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c0a5fb990, parent_tid=0x7c5c0a5fb990, exit_signal=0, stack=0x7c5c09dfb000, stack_size=0x7ffe40, tls=0x7c5c0a5fb6c0} => {parent_tid=[8896]}, 88) = 8896
+8891  openat(AT_FDCWD</work>, "/proc/self/cgroup", O_RDONLY|O_CLOEXEC) = 20</proc/8891/cgroup>
+8891  openat(AT_FDCWD</work>, "/sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.max", O_RDONLY|O_CLOEXEC) = 20</sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.max>
+8891  openat(AT_FDCWD</work>, "/sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.high", O_RDONLY|O_CLOEXEC) = 20</sys/fs/cgroup/user.slice/user-1000.slice/session-30.scope/memory.high>
+8891  openat(AT_FDCWD</work>, "/proc/meminfo", O_RDONLY|O_CLOEXEC) = 20</proc/meminfo>
+8891  openat(AT_FDCWD</work>, "/proc/self/maps", O_RDONLY|O_CLOEXEC) = 20</proc/8891/maps>
+8891  openat(AT_FDCWD</work>, "/proc/self/maps", O_RDONLY) = 20</proc/8891/maps>
+8891  openat(AT_FDCWD</work>, "/proc/self/maps", O_RDONLY) = 20</proc/8891/maps>
+8891  openat(AT_FDCWD</work>, "/usr/bin/node", O_RDONLY) = 20</usr/bin/node>
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c0cc94990, parent_tid=0x7c5c0cc94990, exit_signal=0, stack=0x7c5c0cc8c000, stack_size=0x7e40, tls=0x7c5c0cc946c0} => {parent_tid=[8897]}, 88) = 8897
+8891  openat(AT_FDCWD</work>, "/work/package.json", O_RDONLY|O_CLOEXEC) = 20</work/package.json>
+8891  openat(AT_FDCWD</work>, "/work/node_modules/pkgsnitch-demo-leftpad/package.json", O_RDONLY|O_CLOEXEC) = 20</work/node_modules/pkgsnitch-demo-leftpad/package.json>
+8891  openat(AT_FDCWD</work>, "/work/node_modules/pkgsnitch-demo-leftpad/index.js", O_RDONLY|O_CLOEXEC) = 20</work/node_modules/pkgsnitch-demo-leftpad/index.js>
+8891  openat(AT_FDCWD</work>, "/etc/resolv.conf", O_RDONLY) = 20</run/systemd/resolve/stub-resolv.conf>
+8891  openat(AT_FDCWD</work>, "/etc/nsswitch.conf", O_RDONLY) = 20</etc/nsswitch.conf>
+8891  openat(AT_FDCWD</work>, "/etc/netsvc.conf", O_RDONLY) = -1 ENOENT (Datei oder Verzeichnis nicht gefunden)
+8891  openat(AT_FDCWD</work>, "/etc/svc.conf", O_RDONLY) = -1 ENOENT (Datei oder Verzeichnis nicht gefunden)
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c09dfa990, parent_tid=0x7c5c09dfa990, exit_signal=0, stack=0x7c5c095fa000, stack_size=0x7ffe40, tls=0x7c5c09dfa6c0} => {parent_tid=[8898]}, 88) = 8898
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c095f9990, parent_tid=0x7c5c095f9990, exit_signal=0, stack=0x7c5c08df9000, stack_size=0x7ffe40, tls=0x7c5c095f96c0} => {parent_tid=[8899]}, 88) = 8899
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5c08df8990, parent_tid=0x7c5c08df8990, exit_signal=0, stack=0x7c5c085f8000, stack_size=0x7ffe40, tls=0x7c5c08df86c0} => {parent_tid=[8900]}, 88) = 8900
+8891  clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7c5be3fff990, parent_tid=0x7c5be3fff990, exit_signal=0, stack=0x7c5be37ff000, stack_size=0x7ffe40, tls=0x7c5be3fff6c0} => {parent_tid=[8901]}, 88) = 8901
+8898  connect(20<socket:[30082]>, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (Datei oder Verzeichnis nicht gefunden)
+8898  connect(20<socket:[30083]>, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (Datei oder Verzeichnis nicht gefunden)
+8898  openat(AT_FDCWD</work>, "/etc/nsswitch.conf", O_RDONLY|O_CLOEXEC) = 20</etc/nsswitch.conf>
+8898  openat(AT_FDCWD</work>, "/etc/host.conf", O_RDONLY|O_CLOEXEC) = 20</etc/host.conf>
+8898  openat(AT_FDCWD</work>, "/etc/resolv.conf", O_RDONLY|O_CLOEXEC) = 20</run/systemd/resolve/stub-resolv.conf>
+8898  openat(AT_FDCWD</work>, "/etc/hosts", O_RDONLY|O_CLOEXEC) = 20</etc/hosts>
+8898  openat(AT_FDCWD</work>, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 20</etc/ld.so.cache>
+8898  openat(AT_FDCWD</work>, "/lib/x86_64-linux-gnu/libnss_mdns4_minimal.so.2", O_RDONLY|O_CLOEXEC) = 20</usr/lib/x86_64-linux-gnu/libnss_mdns4_minimal.so.2>
+8898  connect(20<socket:[30084]>, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("127.0.0.53")}, 16) = 0
+8898  sendmmsg(20<socket:[30084]>, [{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="1]\1 \0\1\0\0\0\0\0\1\ttelemetry\16pkgsnitch-demo\7invalid\0\0\1\0\1\0\0)\4\260\0\0\0\0\0\0", iov_len=61}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=61}, {msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\343c\1 \0\1\0\0\0\0\0\1\ttelemetry\16pkgsnitch-demo\7invalid\0\0\34\0\1\0\0)\4\260\0\0\0\0\0\0", iov_len=61}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=61}], 2, MSG_NOSIGNAL) = 2
+8898  connect(20<socket:[30085]>, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("127.0.0.53")}, 16) = 0
+8898  sendmmsg(20<socket:[30085]>, [{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\351_\1 \0\1\0\0\0\0\0\1\ttelemetry\16pkgsnitch-demo\7invalid\0\0\1\0\1\0\0)\4\260\0\0\0\0\0\0", iov_len=61}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=61}, {msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\340\\\1 \0\1\0\0\0\0\0\1\ttelemetry\16pkgsnitch-demo\7invalid\0\0\34\0\1\0\0)\4\260\0\0\0\0\0\0", iov_len=61}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=61}], 2, MSG_NOSIGNAL) = 2

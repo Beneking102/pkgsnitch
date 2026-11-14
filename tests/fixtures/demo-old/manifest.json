@@ -1,0 +1,8 @@
+{
+  "name": "pkgsnitch-demo-leftpad",
+  "version": "1.0.0",
+  "description": "Demo fixture for pkgsnitch: the honest version.",
+  "private": true,
+  "main": "index.js",
+  "license": "MIT"
+}

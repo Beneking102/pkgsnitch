@@ -117,6 +117,13 @@ pub struct Profile {
     pub phases: Vec<PhaseStat>,
 }
 
+/// Current version of the JSON output layout.
+pub const SCHEMA: u32 = 1;
+
+fn schema_version() -> u32 {
+    SCHEMA
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Change {
@@ -139,6 +146,9 @@ pub struct Finding {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
+    /// Version of this JSON layout; bumped on breaking changes.
+    #[serde(default = "schema_version")]
+    pub schema: u32,
     pub package: String,
     /// `None` when a single version was scanned against the empty baseline.
     pub old: Option<String>,

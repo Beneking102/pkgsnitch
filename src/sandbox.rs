@@ -3,6 +3,7 @@
 //! The container runtime is driven through its CLI so that pkgsnitch stays a
 //! small static binary and works with any Docker-compatible engine.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -186,6 +187,34 @@ impl Sandbox {
         self.copy_out(id, "/out/.", dir.path())?;
         self.copy_out(id, "/probe/net.jsonl", dir.path())?;
         Ok(RawRun { dir })
+    }
+
+    /// Ask the registry for the newest published version of each package.
+    /// Packages the registry does not know are left out of the result.
+    pub fn latest_versions(&self, names: &[String]) -> Result<BTreeMap<String, String>> {
+        if names.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        // The lookup runs in the sandbox, so the host needs no npm of its own.
+        const SCRIPT: &str = r#"for p in "$@"; do v=$(npm view -- "$p" version 2>/dev/null) && printf '%s %s\n' "$p" "$v"; done"#;
+        let container = Container::start(self)?;
+        let mut args = vec![
+            "exec",
+            "--user",
+            "dev",
+            container.id.as_str(),
+            "sh",
+            "-c",
+            SCRIPT,
+            "sh",
+        ];
+        args.extend(names.iter().map(String::as_str));
+        let out = self.run(&args).context("could not query the registry")?;
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .map(|(name, version)| (name.to_string(), version.trim().to_string()))
+            .collect())
     }
 
     fn copy_out(&self, id: &str, from: &str, to: &Path) -> Result<()> {

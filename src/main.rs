@@ -6,6 +6,7 @@
 mod diff;
 mod extract;
 mod model;
+mod plan;
 mod profile;
 mod report;
 mod rules;
@@ -19,13 +20,20 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::diff::Mode;
-use crate::model::{Profile, Severity};
+use crate::model::{Profile, Report, Severity};
+use crate::plan::{Outcome, Plan, Update};
 use crate::profile::Cache;
 use crate::report::Format;
 use crate::sandbox::{Sandbox, Target};
 
 #[derive(Parser)]
-#[command(name = "pkgsnitch", version, about, max_term_width = 100)]
+#[command(
+    name = "pkgsnitch",
+    version,
+    about,
+    author = "Bene Pankratz (@Beneking102)",
+    max_term_width = 100
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -51,6 +59,38 @@ enum Cmd {
     Scan {
         /// `name`, `name@version` or a tarball
         package: String,
+        #[command(flatten)]
+        opts: Options,
+    },
+    /// Patch management: find outdated dependencies and test every update
+    #[command(
+        after_help = "Reads package-lock.json, asks the registry for newer versions of your direct\ndependencies, runs the behavioral diff for each and prints a patch plan:\napply, review or hold.\n\nExamples:\n  pkgsnitch updates\n  pkgsnitch updates ./my-app --dev --format markdown"
+    )]
+    Updates {
+        /// Project directory containing package-lock.json
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+        /// Include devDependencies
+        #[arg(long)]
+        dev: bool,
+        /// Evaluate at most this many updates
+        #[arg(long, default_value_t = 20)]
+        max: usize,
+        #[command(flatten)]
+        opts: Options,
+    },
+    /// Review every change between two lockfiles, e.g. in a dependency pull request
+    #[command(
+        after_help = "Example:\n  git show origin/main:package-lock.json > base.json\n  pkgsnitch lock base.json package-lock.json --format markdown"
+    )]
+    Lock {
+        /// package-lock.json before the change
+        old: PathBuf,
+        /// package-lock.json after the change
+        new: PathBuf,
+        /// Evaluate at most this many changes (direct dependencies first)
+        #[arg(long, default_value_t = 20)]
+        max: usize,
         #[command(flatten)]
         opts: Options,
     },
@@ -98,10 +138,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
-    let (old, new, mode, opts) = match cli.command {
+    match cli.command {
         Cmd::Analyze { dir } => {
             println!("{}", serde_json::to_string_pretty(&profile::build(&dir)?)?);
-            return Ok(ExitCode::SUCCESS);
+            Ok(ExitCode::SUCCESS)
         }
         Cmd::CompareDirs { old, new, opts } => {
             let before =
@@ -110,49 +150,107 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 profile::build(&new).with_context(|| format!("analyzing {}", new.display()))?;
             let report = diff::compare(&before, &after, Mode::Update);
             anstream::print!("{}", report::render(&report, opts.format));
-            return Ok(if report.verdict >= opts.fail_on {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
-            });
+            Ok(exit_code(report.verdict, &opts))
         }
         Cmd::Diff { targets, opts } => {
             let (old, new) = diff_targets(&targets)?;
-            (old, new, Mode::Update, opts)
+            single(&old, &new, Mode::Update, &opts)
         }
-        Cmd::Scan { package, opts } => (Target::Baseline, scan_target(&package)?, Mode::Scan, opts),
-    };
-
-    let sandbox = Sandbox::new(&opts.runtime, opts.timeout)?;
-    sandbox.ensure_image()?;
-    let cache = Cache::new(!opts.no_cache, sandbox.fingerprint());
-    let session = Session {
-        sandbox: &sandbox,
-        cache: &cache,
-    };
-
-    // Both observations are independent, so they run side by side.
-    let (before, after) = std::thread::scope(|scope| {
-        let before = scope.spawn(|| session.profile(&old));
-        let after = session.profile(&new);
-        (before.join().expect("observer thread panicked"), after)
-    });
-    let (before, after) = (before?, after?);
-    if mode == Mode::Update && before.name != after.name {
-        bail!(
-            "cannot compare different packages: `{}` and `{}`",
-            before.name,
-            after.name
-        );
+        Cmd::Scan { package, opts } => single(
+            &Target::Baseline,
+            &scan_target(&package)?,
+            Mode::Scan,
+            &opts,
+        ),
+        Cmd::Lock {
+            old,
+            new,
+            max,
+            opts,
+        } => {
+            let updates = plan::changes(&plan::read_lock(&old)?, &plan::read_lock(&new)?);
+            if updates.is_empty() {
+                return Ok(print_plan(Plan::new(Vec::new(), 0, false), &opts));
+            }
+            with_session(&opts, |session| {
+                Ok(evaluate(session, updates, max, false, &opts))
+            })
+        }
+        Cmd::Updates {
+            dir,
+            dev,
+            max,
+            opts,
+        } => {
+            let lock = plan::read_lock(&dir.join("package-lock.json"))?;
+            let names: Vec<String> = lock
+                .direct(dev)
+                .map(|(name, _)| name.to_string())
+                .filter(|name| validate(name, "package name").is_ok())
+                .collect();
+            with_session(&opts, |session| {
+                eprintln!(
+                    "  asking the registry about {} dependencies...",
+                    names.len()
+                );
+                let latest = session.sandbox.latest_versions(&names)?;
+                let updates = plan::outdated(&lock, &latest, dev);
+                Ok(evaluate(session, updates, max, true, &opts))
+            })
+        }
     }
+}
 
-    let report = diff::compare(&before, &after, mode);
-    anstream::print!("{}", report::render(&report, opts.format));
-    Ok(if report.verdict >= opts.fail_on {
+fn exit_code(verdict: Severity, opts: &Options) -> ExitCode {
+    if verdict >= opts.fail_on {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Start the sandbox once and run `work` against it.
+fn with_session<T>(opts: &Options, work: impl FnOnce(&Session) -> Result<T>) -> Result<T> {
+    let sandbox = Sandbox::new(&opts.runtime, opts.timeout)?;
+    sandbox.ensure_image()?;
+    let cache = Cache::new(!opts.no_cache, sandbox.fingerprint());
+    work(&Session {
+        sandbox: &sandbox,
+        cache: &cache,
     })
+}
+
+/// `diff` and `scan`: one comparison, printed in full.
+fn single(old: &Target, new: &Target, mode: Mode, opts: &Options) -> Result<ExitCode> {
+    let report = with_session(opts, |session| session.compare(old, new, mode))?;
+    anstream::print!("{}", report::render(&report, opts.format));
+    Ok(exit_code(report.verdict, opts))
+}
+
+/// `lock` and `updates`: evaluate many updates and print the patch plan.
+/// A failure to observe one update is recorded in the plan, not fatal.
+fn evaluate(
+    session: &Session,
+    updates: Vec<Update>,
+    max: usize,
+    suggest_command: bool,
+    opts: &Options,
+) -> ExitCode {
+    let skipped = updates.len().saturating_sub(max);
+    let outcomes = updates
+        .into_iter()
+        .take(max)
+        .map(|update| {
+            let result = session.observe_update(&update);
+            Outcome::new(update, result)
+        })
+        .collect();
+    print_plan(Plan::new(outcomes, skipped, suggest_command), opts)
+}
+
+fn print_plan(plan: Plan, opts: &Options) -> ExitCode {
+    anstream::print!("{}", plan::render(&plan, opts.format));
+    exit_code(plan.verdict, opts)
 }
 
 struct Session<'a> {
@@ -161,6 +259,41 @@ struct Session<'a> {
 }
 
 impl Session<'_> {
+    /// Observe both targets side by side and compare them.
+    fn compare(&self, old: &Target, new: &Target, mode: Mode) -> Result<Report> {
+        let (before, after) = std::thread::scope(|scope| {
+            let before = scope.spawn(|| self.profile(old));
+            let after = self.profile(new);
+            (before.join().expect("observer thread panicked"), after)
+        });
+        let (before, after) = (before?, after?);
+        if mode == Mode::Update && before.name != after.name {
+            bail!(
+                "cannot compare different packages: `{}` and `{}`",
+                before.name,
+                after.name
+            );
+        }
+        Ok(diff::compare(&before, &after, mode))
+    }
+
+    /// The behavioral diff of one entry in a patch plan.
+    fn observe_update(&self, update: &Update) -> Result<Report> {
+        validate(&update.name, "package name")?;
+        validate(&update.to, "version")?;
+        let registry = |version: &str| Target::Registry {
+            name: update.name.clone(),
+            version: Some(version.to_string()),
+        };
+        match &update.from {
+            Some(from) => {
+                validate(from, "version")?;
+                self.compare(&registry(from), &registry(&update.to), Mode::Update)
+            }
+            None => self.compare(&Target::Baseline, &registry(&update.to), Mode::Scan),
+        }
+    }
+
     fn profile(&self, target: &Target) -> Result<Profile> {
         let label = target.label();
         // Only exact registry versions are immutable enough to cache.

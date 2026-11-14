@@ -64,6 +64,17 @@ fn terminal(r: &Report) -> String {
     }
     for f in &new {
         let phase = f.phase.map_or("manifest", |p| p.label());
+        // Minor findings get one line, so the serious ones stand out.
+        if f.severity <= Severity::Low {
+            let _ = writeln!(
+                o,
+                "  {}  {:<8}  {}",
+                badge(f.severity),
+                phase.dimmed(),
+                format!("{}: {}", f.title, f.target).dimmed()
+            );
+            continue;
+        }
         let _ = writeln!(
             o,
             "  {}  {:<8}  {}",
@@ -82,6 +93,9 @@ fn terminal(r: &Report) -> String {
             );
         }
         let _ = writeln!(o, "  {:<8}  {:<8}  {}\n", "", "", f.why.dimmed());
+    }
+    if new.last().is_some_and(|f| f.severity <= Severity::Low) {
+        o.push('\n');
     }
     if !gone.is_empty() {
         let _ = writeln!(
@@ -182,6 +196,7 @@ mod tests {
 
     fn report() -> Report {
         Report {
+            schema: crate::model::SCHEMA,
             package: "demo".into(),
             old: Some("1.0.0".into()),
             new: "1.0.1".into(),

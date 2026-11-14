@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::model::{Behavior, Change, Finding, Profile, Report, Severity};
+use crate::model::{Behavior, Change, Finding, Kind, Profile, Report, Severity, SCHEMA};
 use crate::rules;
 
 /// What the comparison is for; decides how the manifest is read.
@@ -19,7 +19,11 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
     let after: BTreeSet<&Behavior> = new.behaviors.iter().map(|o| &o.behavior).collect();
     let mut findings = Vec::new();
 
-    for b in after.difference(&before) {
+    let added: Vec<&Behavior> = after.difference(&before).copied().collect();
+    for b in &added {
+        if is_shell_wrapper(b, &added) {
+            continue;
+        }
         let (severity, why) = rules::rate(b);
         findings.push(behavior_finding(b, Change::Added, severity, why));
     }
@@ -48,6 +52,7 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
         .unwrap_or(Severity::Info);
 
     Report {
+        schema: SCHEMA,
         package: new.name.clone(),
         old: (mode == Mode::Update).then(|| old.version.clone()),
         new: new.version.clone(),
@@ -55,6 +60,18 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
         findings,
         phases: new.phases.clone(),
     }
+}
+
+/// `sh -c "node x.js"` followed by `node x.js` is one event, not two: the
+/// shell is only how a script gets started. Report the command it ran and
+/// drop the wrapper.
+fn is_shell_wrapper(b: &Behavior, added: &[&Behavior]) -> bool {
+    const SHELLS: [&str; 3] = ["sh -c ", "bash -c ", "dash -c "];
+    b.kind == Kind::Exec
+        && SHELLS.iter().any(|shell| b.target.starts_with(shell))
+        && added
+            .iter()
+            .any(|x| x.kind == Kind::Exec && x.phase == b.phase && x.actor.starts_with(&b.target))
 }
 
 fn behavior_finding(b: &Behavior, change: Change, severity: Severity, why: String) -> Finding {
@@ -206,7 +223,33 @@ fn dependencies(old: &Profile, new: &Profile, mode: Mode, out: &mut Vec<Finding>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Kind, Manifest, Observed, Phase};
+    use crate::model::{Manifest, Observed, Phase};
+
+    #[test]
+    fn shell_wrapper_is_folded_into_its_command() {
+        let exec = |target: &str, actor: &str| Observed {
+            behavior: Behavior {
+                phase: Phase::Install,
+                kind: Kind::Exec,
+                target: target.into(),
+                actor: actor.into(),
+            },
+            count: 1,
+        };
+        let a = profile("1.0.0", &[]);
+        let mut b = profile("1.0.1", &[]);
+        b.behaviors = vec![
+            exec("sh -c node setup.js", "npm rebuild"),
+            exec("node setup.js", "sh -c node setup.js (in demo)"),
+            exec("sh -c true", "npm rebuild"),
+        ];
+        let targets: Vec<_> = compare(&a, &b, Mode::Update)
+            .findings
+            .into_iter()
+            .map(|f| f.target)
+            .collect();
+        assert_eq!(targets, ["node setup.js", "sh -c true"]);
+    }
 
     fn profile(version: &str, behaviors: &[(Kind, &str)]) -> Profile {
         Profile {

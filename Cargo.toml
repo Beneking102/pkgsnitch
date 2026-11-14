@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 description = "Behavioral diff for package updates: see what a new version does at install and import time that the old one did not."
+authors = ["Bene Pankratz"]
 license = "MIT"
+repository = "https://github.com/Beneking102/pkgsnitch"
+readme = "README.md"
 keywords = ["security", "supply-chain", "npm", "sandbox", "diff"]
 categories = ["command-line-utilities", "development-tools"]
 

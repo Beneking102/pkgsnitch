@@ -1,0 +1,22 @@
+{
+  "name": "probe",
+  "version": "0.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "probe",
+      "version": "0.0.0",
+      "dependencies": {
+        "pkgsnitch-demo-leftpad": "file:../../../tmp/pkgsnitch-demo-leftpad-1.0.1.tgz"
+      }
+    },
+    "node_modules/pkgsnitch-demo-leftpad": {
+      "version": "1.0.1",
+      "resolved": "file:../../../tmp/pkgsnitch-demo-leftpad-1.0.1.tgz",
+      "integrity": "sha512-Z72SpHv4WNczRSfKHk2E9KV3G+sF+5rTVQox6Hf65UmSSGIr2QGI+oSkpbNZ1BftnYS9eK41ILw2KUP4Y81sGQ==",
+      "hasInstallScript": true,
+      "license": "MIT"
+    }
+  }
+}
