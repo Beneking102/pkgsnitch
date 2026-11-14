@@ -4,6 +4,7 @@
 //! small static binary and works with any Docker-compatible engine.
 
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -128,12 +129,26 @@ impl Sandbox {
                 version: None,
             } => name.clone(),
             Target::Tarball(path) => {
-                let from = path.to_str().context("tarball path is not valid UTF-8")?;
-                // Windows canonical paths carry a prefix the Docker CLI rejects.
-                let from = from.strip_prefix(r"\\?\").unwrap_or(from);
-                self.run(&["cp", from, &format!("{id}:{TARBALL}")])
-                    .with_context(|| format!("could not copy `{from}` into the sandbox"))?;
-                self.run(&["exec", "--user", "root", id, "chmod", "0644", TARBALL])?;
+                // Streamed in as the sandbox user: `docker cp` would keep the
+                // host's file owner, which the capability-less container
+                // cannot change afterwards.
+                let file = File::open(path)
+                    .with_context(|| format!("could not open `{}`", path.display()))?;
+                let write = format!("cat > {TARBALL}");
+                self.run_with(
+                    &[
+                        "exec",
+                        "--interactive",
+                        "--user",
+                        "dev",
+                        id,
+                        "sh",
+                        "-c",
+                        &write,
+                    ],
+                    Stdio::from(file),
+                )
+                .with_context(|| format!("could not copy `{}` into the sandbox", path.display()))?;
                 TARBALL.to_string()
             }
         };
@@ -223,9 +238,13 @@ impl Sandbox {
     }
 
     fn run(&self, args: &[&str]) -> Result<Output> {
+        self.run_with(args, Stdio::null())
+    }
+
+    fn run_with(&self, args: &[&str], stdin: Stdio) -> Result<Output> {
         let out = Command::new(&self.runtime)
             .args(args)
-            .stdin(Stdio::null())
+            .stdin(stdin)
             .output()
             .with_context(|| format!("could not run `{}`", self.runtime))?;
         if !out.status.success() {
