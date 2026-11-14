@@ -528,6 +528,25 @@ fn advise(update: &Update, result: Result<&Report, String>) -> (Advice, String) 
         Err(e) => return (Advice::Unknown, format!("could not be observed: {e}")),
     };
     let worst = report.findings.iter().find(|f| f.change != Change::Removed);
+    // A phase that broke off was only watched up to that point. Unless
+    // something alarming was already seen, that is not a clean result.
+    let broken = report
+        .phases
+        .iter()
+        .find(|p| p.exit_code.is_some_and(|code| code != 0));
+    if let (Some(phase), true) = (broken, report.verdict < Severity::High) {
+        let how = match phase.exit_code {
+            Some(124 | 137) => "timed out".to_string(),
+            code => format!("failed with status {}", code.unwrap_or(-1)),
+        };
+        return (
+            Advice::Unknown,
+            format!(
+                "the {} phase {how} in the sandbox, so the observation is incomplete",
+                phase.phase.label()
+            ),
+        );
+    }
     match (report.verdict, update.bump) {
         (Severity::High | Severity::Critical, _) => {
             let what = worst.map_or(String::new(), |f| format!(": {} {}", f.title, f.target));
@@ -1043,6 +1062,24 @@ mod tests {
         );
         assert_eq!(advise(&major, Ok(&report(Severity::High))).0, Advice::Hold);
         assert_eq!(advise(&patch, Err("boom".into())).0, Advice::Unknown);
+
+        // An install that broke off is not a clean result...
+        let mut partial = report(Severity::Info);
+        partial.phases = vec![crate::model::PhaseStat {
+            phase: Phase::Install,
+            exit_code: Some(1),
+            syscalls: 900,
+        }];
+        let (advice, reason) = advise(&patch, Ok(&partial));
+        assert_eq!(advice, Advice::Unknown);
+        assert_eq!(
+            reason,
+            "the install phase failed with status 1 in the sandbox, so the observation is incomplete"
+        );
+        // ...but what was seen before it broke off still counts.
+        let mut alarming = report(Severity::Critical);
+        alarming.phases = partial.phases.clone();
+        assert_eq!(advise(&patch, Ok(&alarming)).0, Advice::Hold);
     }
 
     #[test]

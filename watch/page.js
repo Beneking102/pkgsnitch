@@ -19,7 +19,8 @@ const RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 
 // What a reader needs to know about one package this week.
 function status(outcome) {
-  if (outcome.error) return { key: 'unknown', label: 'not observed' };
+  // No report at all, or one that pkgsnitch itself calls incomplete.
+  if (outcome.error || outcome.advice === 'unknown') return { key: 'unknown', label: 'incomplete' };
   const verdict = outcome.report.verdict;
   if (RANK[verdict] >= 3) return { key: 'look', label: 'needs a look' };
   if (verdict === 'medium') return { key: 'new', label: 'new behavior' };
@@ -37,6 +38,7 @@ const count = (key) => outcomes.filter((o) => o.state.key === key).length;
 function findings(outcome) {
   if (outcome.error) return `<p class="error">${esc(outcome.error)}</p>`;
   const shown = outcome.report.findings.filter((f) => f.change !== 'removed' && f.severity !== 'info');
+  if (outcome.advice === 'unknown') return `<p class="error">${esc(outcome.reason)}</p>`;
   if (shown.length === 0) return '<p class="quiet">Nothing the previous release did not already do.</p>';
   return shown
     .map(
@@ -116,7 +118,7 @@ const html = `<!doctype html>
     <div><b>${count('clean')}</b><span>nothing new</span></div>
     <div><b>${count('new')}</b><span>new behavior</span></div>
     <div><b>${count('look')}</b><span>needs a look</span></div>
-    <div><b>${count('unknown')}</b><span>not observed</span></div>
+    <div><b>${count('unknown')}</b><span>incomplete</span></div>
   </div>
 ${rows}
   <footer>
@@ -131,4 +133,4 @@ ${rows}
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, 'index.html'), html);
 fs.copyFileSync(input, path.join(outDir, 'watch.json'));
-console.log(`${outcomes.length} packages: ${count('clean')} nothing new, ${count('new')} new behavior, ${count('look')} need a look, ${count('unknown')} not observed`);
+console.log(`${outcomes.length} packages: ${count('clean')} nothing new, ${count('new')} new behavior, ${count('look')} need a look, ${count('unknown')} incomplete`);

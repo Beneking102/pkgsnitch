@@ -1,7 +1,7 @@
 # The pkgsnitch observation sandbox, for npm and PyPI packages.
 # Built automatically on first use; the tag is derived from this directory's
 # contents, so editing any file here produces a fresh image.
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends strace ca-certificates git python3 python3-venv make g++ \
