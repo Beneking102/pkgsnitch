@@ -139,21 +139,21 @@ fn scripts(old: &Profile, new: &Profile, mode: Mode, out: &mut Vec<Finding>) {
                 Change::Added,
                 "has install script",
                 target,
-                "runs automatically on every `npm install`",
+                "runs automatically on every install",
             )),
             None => out.push(manifest_finding(
                 Severity::High,
                 Change::Added,
                 "install script added",
                 target,
-                "this version starts running code on every `npm install`",
+                "this version starts running code on every install",
             )),
             Some(previous) if previous != cmd => out.push(manifest_finding(
                 Severity::Medium,
                 Change::Changed,
                 "install script changed",
                 target,
-                "the command run on `npm install` is different",
+                "the command run on install is different",
             )),
             Some(_) => {}
         }
