@@ -7,6 +7,7 @@ mod allow;
 mod canary;
 mod diff;
 mod extract;
+mod lockfile;
 mod model;
 mod plan;
 mod profile;
@@ -197,7 +198,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             max,
             opts,
         } => {
-            let lock = plan::read_lock(&project_lock(&dir)?)?;
+            let file = project_lock(&dir)?;
+            let lock = plan::read_lock(&file)?;
+            if !lock.knows_direct() {
+                bail!(
+                    "`{}` does not say which packages the project depends on directly; \
+                     `updates` needs a package-lock.json or a requirements.txt \
+                     (`lock` can compare two versions of this file)",
+                    file.display()
+                );
+            }
             let names: Vec<String> = lock
                 .direct(dev)
                 .map(|(name, _)| name.to_string())

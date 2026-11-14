@@ -70,6 +70,10 @@ jobs:
           cat plan.json
           jq -e '.outcomes | length == 2' plan.json
           jq -e '[.outcomes[] | .advice] == ["apply", "apply"]' plan.json
+          # The same change written as a yarn.lock gives the same plan.
+          target/release/pkgsnitch lock tests/fixtures/locks/yarn-base.lock tests/fixtures/locks/yarn-head.lock --format json > yarn.json
+          jq -e '[.outcomes[] | .name] == ["is-number", "left-pad"]' yarn.json
+          jq -e '[.outcomes[] | .advice] == ["apply", "apply"]' yarn.json
       - name: updates finds and evaluates newer versions
         run: |
           mkdir project && cp tests/fixtures/locks/base.json project/package-lock.json

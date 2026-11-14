@@ -11,6 +11,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::lockfile::{self, normalize_python};
 use crate::model::{Change, Report, Severity, SCHEMA};
 use crate::report::Format;
 use crate::sandbox::Ecosystem;
@@ -32,7 +33,11 @@ pub struct Lock {
 pub fn read_lock(path: &Path) -> Result<Lock> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    // A lockfile of npm is JSON; anything else is read as pip requirements.
+    // yarn, pnpm and the Python TOML locks are recognized by their content.
+    if let Some((ecosystem, pins)) = lockfile::pinned(&text) {
+        return Ok(Lock::from_pins(ecosystem, pins));
+    }
+    // npm's lockfile is JSON; anything else is read as pip requirements.
     if !text.trim_start().starts_with('{') {
         return Ok(parse_requirements(&text));
     }
@@ -122,22 +127,23 @@ fn parse_requirements(text: &str) -> Lock {
     lock
 }
 
-/// PyPI treats `Foo_Bar`, `foo-bar` and `foo.bar` as one name.
-fn normalize_python(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        if matches!(c, '-' | '_' | '.') {
-            if !out.ends_with('-') {
-                out.push('-');
-            }
-        } else {
-            out.push(c.to_ascii_lowercase());
-        }
-    }
-    out
-}
-
 impl Lock {
+    /// A lockfile that only says which versions are present. It does not
+    /// tell direct from transitive dependencies, so `updates` finds nothing
+    /// to propose from it; `lock` compares it like any other.
+    fn from_pins(ecosystem: Ecosystem, pins: Vec<lockfile::Pin>) -> Self {
+        let mut lock = Self::empty(ecosystem);
+        for (name, version) in pins {
+            lock.packages.entry(name).or_default().insert(version);
+        }
+        lock
+    }
+
+    /// Whether the file names the project's own dependencies.
+    pub fn knows_direct(&self) -> bool {
+        !self.direct.is_empty()
+    }
+
     fn empty(ecosystem: Ecosystem) -> Self {
         Self {
             ecosystem,

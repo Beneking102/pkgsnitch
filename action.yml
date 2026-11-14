@@ -7,7 +7,7 @@ branding:
 
 inputs:
   lockfile:
-    description: Path to the package-lock.json to review.
+    description: "Path to the lockfile to review: package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock or uv.lock."
     default: package-lock.json
   base-ref:
     description: Git ref holding the lockfile before the change. Defaults to the pull request's base branch.
@@ -71,7 +71,9 @@ runs:
           exit 2
         fi
         git fetch --quiet --depth=1 origin "$BASE_REF"
-        base="$RUNNER_TEMP/pkgsnitch-base-lock.json"
+        # Same file name as the original, in a directory of its own.
+        mkdir -p "$RUNNER_TEMP/pkgsnitch-base"
+        base="$RUNNER_TEMP/pkgsnitch-base/$(basename "$LOCKFILE")"
         report="$RUNNER_TEMP/pkgsnitch-report.md"
         echo "report=$report" >> "$GITHUB_OUTPUT"
         if ! git show "FETCH_HEAD:$LOCKFILE" > "$base" 2>/dev/null; then

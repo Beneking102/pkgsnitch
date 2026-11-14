@@ -41,6 +41,7 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
     scripts(old, new, mode, &mut findings);
     dependencies(old, new, mode, &mut findings);
 
+    let mut findings = merge_repeats(findings);
     findings.sort_by(|a, b| {
         (b.severity, a.phase, &a.title, &a.target).cmp(&(a.severity, b.phase, &b.title, &b.target))
     });
@@ -60,6 +61,35 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
         findings,
         phases: new.phases.clone(),
     }
+}
+
+/// The same thing done by several processes (a build script that runs twice,
+/// a worker pool) is one finding. The first process is named, the others
+/// are counted.
+fn merge_repeats(findings: Vec<Finding>) -> Vec<Finding> {
+    let mut merged: Vec<(Finding, usize)> = Vec::new();
+    for finding in findings {
+        let same = merged.iter_mut().find(|(known, _)| {
+            known.change == finding.change
+                && known.severity == finding.severity
+                && known.phase == finding.phase
+                && known.title == finding.title
+                && known.target == finding.target
+        });
+        match same {
+            Some((_, others)) => *others += 1,
+            None => merged.push((finding, 0)),
+        }
+    }
+    merged
+        .into_iter()
+        .map(|(mut finding, others)| {
+            if others > 0 && !finding.actor.is_empty() {
+                finding.actor = format!("{} (and {others} more)", finding.actor);
+            }
+            finding
+        })
+        .collect()
 }
 
 /// `sh -c "node x.js"` followed by `node x.js` is one event, not two: the
@@ -249,6 +279,33 @@ fn dependencies(old: &Profile, new: &Profile, mode: Mode, out: &mut Vec<Finding>
 mod tests {
     use super::*;
     use crate::model::{Manifest, Observed, Phase};
+
+    #[test]
+    fn the_same_act_by_several_processes_is_one_finding() {
+        let read = |actor: &str| Observed {
+            behavior: Behavior {
+                phase: Phase::Install,
+                kind: Kind::Read,
+                target: "~/.ssh/id_rsa".into(),
+                actor: actor.into(),
+            },
+            count: 1,
+        };
+        let a = profile("1.0.0", &[]);
+        let mut b = profile("1.0.1", &[]);
+        b.behaviors = vec![
+            read("python setup.py egg_info"),
+            read("python setup.py install"),
+            read("python setup.py bdist"),
+        ];
+        let report = compare(&a, &b, Mode::Update);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].actor,
+            "python setup.py bdist (and 2 more)"
+        );
+        assert_eq!(report.verdict, Severity::Critical);
+    }
 
     #[test]
     fn shell_wrapper_is_folded_into_its_command() {

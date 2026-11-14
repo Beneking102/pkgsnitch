@@ -18,7 +18,7 @@ A source diff shows what changed in the code. pkgsnitch shows what changed in th
 | Review a dependency pull request | `pkgsnitch lock <old-lock> <new-lock>` |
 | Check your own release before publishing | `pkgsnitch diff old.tgz new.tgz` (also `.whl`, or `pypi:x.tar.gz`) |
 
-For Python, prefix the package with `pypi:`, as in `pkgsnitch diff pypi:requests 2.31.0 2.32.3`. `updates` and `lock` read a `requirements.txt` the same way as a `package-lock.json`.
+For Python, prefix the package with `pypi:`, as in `pkgsnitch diff pypi:requests 2.31.0 2.32.3`. `updates` reads a `requirements.txt` the same way as a `package-lock.json`.
 
 ## Install
 
@@ -57,7 +57,7 @@ Finds newer versions of your direct dependencies, runs the behavioral diff for e
 | **review** | New medium-severity behavior, or a clean major version whose changelog you should read. |
 | **hold** | New high or critical behavior. |
 
-`pkgsnitch lock base.json package-lock.json` does the same for every version that differs between two lockfiles, including transitive ones. As a GitHub Action it comments the plan on the pull request:
+`pkgsnitch lock base.json package-lock.json` does the same for every version that differs between two lockfiles, including transitive ones. It reads `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `requirements.txt`, `poetry.lock` and `uv.lock`. As a GitHub Action it comments the plan on the pull request:
 
 ```yaml
 on: pull_request
