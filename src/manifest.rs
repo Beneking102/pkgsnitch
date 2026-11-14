@@ -60,7 +60,7 @@ fn pin(registry: Registry, name: &str, version: &str, direct: Option<bool>) -> P
 }
 
 /// The file names this module understands, besides `*.csproj`.
-pub const FILES: [&str; 11] = [
+pub const FILES: [&str; 14] = [
     "composer.lock",
     "Cargo.lock",
     "go.mod",
@@ -68,6 +68,9 @@ pub const FILES: [&str; 11] = [
     "packages.lock.json",
     "pom.xml",
     "gradle.lockfile",
+    "build.gradle",
+    "build.gradle.kts",
+    "libs.versions.toml",
     "vcpkg.json",
     "conanfile.txt",
     "conan.lock",
@@ -85,6 +88,8 @@ pub fn read(file_name: &str, text: &str) -> Option<Vec<Pinned>> {
         "packages.lock.json" => nuget_lock(text),
         "pom.xml" => pom(text),
         "gradle.lockfile" => gradle(text),
+        "build.gradle" | "build.gradle.kts" => gradle_build(text),
+        "libs.versions.toml" => version_catalog(text),
         "vcpkg.json" => vcpkg(text),
         "conanfile.txt" => conan_txt(text),
         "conan.lock" => conan_lock(text),
@@ -270,24 +275,169 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     Some(&rest[..rest.find('"')?])
 }
 
-/// Java: `<dependency>` elements with a literal version. Versions given as
-/// `${property}` or inherited from a parent are not pins and are skipped.
+/// Java: `<dependency>` elements with a version, written out or as a
+/// `${property}` defined in the same file. Versions inherited from a parent
+/// or a BOM are not in the file and cannot be read from it.
 fn pom(text: &str) -> Vec<Pinned> {
-    text.split("<dependency>")
-        .skip(1)
-        .filter_map(|rest| {
-            let element = &rest[..rest.find("</dependency>")?];
-            let version = tag(element, "version")?;
-            let name = format!(
-                "{}:{}",
-                tag(element, "groupId")?,
-                tag(element, "artifactId")?
-            );
-            version
-                .starts_with(|c: char| c.is_ascii_digit())
-                .then(|| pin(Registry::Maven, &name, version, Some(true)))
-        })
-        .collect()
+    let properties = pom_properties(text);
+    let mut pins: Vec<Pinned> = Vec::new();
+    for rest in text.split("<dependency>").skip(1) {
+        let Some(end) = rest.find("</dependency>") else {
+            continue;
+        };
+        let element = &rest[..end];
+        let (Some(group), Some(artifact), Some(version)) = (
+            tag(element, "groupId"),
+            tag(element, "artifactId"),
+            tag(element, "version"),
+        ) else {
+            continue;
+        };
+        let version = version
+            .strip_prefix("${")
+            .and_then(|name| name.strip_suffix('}'))
+            .and_then(|name| properties.iter().find(|(key, _)| *key == name))
+            .map_or(version, |(_, value)| value);
+        let name = format!("{group}:{artifact}");
+        let known = pins.iter().any(|p| p.name == name && p.version == version);
+        if version.starts_with(|c: char| c.is_ascii_digit()) && !known {
+            pins.push(pin(Registry::Maven, &name, version, Some(true)));
+        }
+    }
+    pins
+}
+
+/// The `<properties>` of a pom as name and value.
+fn pom_properties(text: &str) -> Vec<(&str, &str)> {
+    let Some(start) = text.find("<properties>") else {
+        return Vec::new();
+    };
+    let body = &text[start + "<properties>".len()..];
+    let body = &body[..body.find("</properties>").unwrap_or(body.len())];
+    let mut found = Vec::new();
+    let mut rest = body;
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('>') else { break };
+        let name = &rest[..close];
+        rest = &rest[close + 1..];
+        // Comments, closing tags and empty elements hold no value.
+        if name.starts_with(['/', '!', '?']) || name.ends_with('/') || name.contains(' ') {
+            continue;
+        }
+        if let Some(end) = rest.find(&format!("</{name}>")) {
+            found.push((name, rest[..end].trim()));
+            rest = &rest[end..];
+        }
+    }
+    found
+}
+
+/// Java: dependency notations in a Gradle build file, `"group:artifact:1.2.3"`.
+/// Versions computed in the build script are not literals and are skipped.
+fn gradle_build(text: &str) -> Vec<Pinned> {
+    let mut pins: Vec<Pinned> = Vec::new();
+    for quote in ['"', '\''] {
+        // Every second piece of a line split at quotes lies inside a string.
+        for line in text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+        {
+            for literal in line.split(quote).skip(1).step_by(2) {
+                if let Some(found) = coordinate(literal) {
+                    if !pins.contains(&found) {
+                        pins.push(found);
+                    }
+                }
+            }
+        }
+    }
+    pins
+}
+
+/// `group:artifact:version` with a literal version, as a Maven pin.
+fn coordinate(text: &str) -> Option<Pinned> {
+    let mut parts = text.split(':');
+    let (group, artifact, version) = (parts.next()?, parts.next()?, parts.next()?);
+    let plain = |s: &str| !s.is_empty() && !s.contains([' ', '$', '/', '{']);
+    (parts.next().is_none()
+        && plain(group)
+        && plain(artifact)
+        && plain(version)
+        && group.contains(|c: char| c.is_ascii_alphabetic())
+        && version.starts_with(|c: char| c.is_ascii_digit()))
+    .then(|| {
+        pin(
+            Registry::Maven,
+            &format!("{group}:{artifact}"),
+            version,
+            Some(true),
+        )
+    })
+}
+
+/// Java: a Gradle version catalog (`libs.versions.toml`). Libraries name a
+/// module and either a version or a reference into `[versions]`.
+fn version_catalog(text: &str) -> Vec<Pinned> {
+    fn quoted<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+        let rest = &line[line.find(key)? + key.len()..];
+        let rest = rest
+            .trim_start()
+            .strip_prefix('=')?
+            .trim_start()
+            .strip_prefix('"')?;
+        Some(&rest[..rest.find('"')?])
+    }
+    let mut versions: Vec<(&str, &str)> = Vec::new();
+    let mut pins: Vec<Pinned> = Vec::new();
+    let mut section = "";
+    // Versions first, whatever the order of the tables.
+    for pass in ["[versions]", "[libraries]"] {
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('[') {
+                section = line;
+                continue;
+            }
+            if section != pass || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let (key, value) = (key.trim(), value.trim());
+            if pass == "[versions]" {
+                if let Some(version) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+                    versions.push((key, version));
+                }
+                continue;
+            }
+            // `name = "group:artifact:1.2.3"`
+            if let Some(found) = value
+                .strip_prefix('"')
+                .and_then(|v| coordinate(v.trim_end_matches('"')))
+            {
+                pins.push(found);
+                continue;
+            }
+            let module = quoted(line, "module").map(str::to_string).or_else(|| {
+                Some(format!(
+                    "{}:{}",
+                    quoted(line, "group")?,
+                    quoted(line, "name")?
+                ))
+            });
+            let version = quoted(line, "version.ref")
+                .and_then(|name| versions.iter().find(|(key, _)| *key == name))
+                .map(|(_, version)| *version)
+                .or_else(|| quoted(line, "version"));
+            if let (Some(module), Some(version)) = (module, version) {
+                if version.starts_with(|c: char| c.is_ascii_digit()) {
+                    pins.push(pin(Registry::Maven, &module, version, Some(true)));
+                }
+            }
+        }
+    }
+    pins
 }
 
 fn tag<'a>(element: &'a str, name: &str) -> Option<&'a str> {
@@ -465,6 +615,41 @@ mod tests {
             [
                 entry("Serilog", "3.1.1", Some(true)),
                 entry("Polly", "8.0.0", Some(true))
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_maven_properties_defined_in_the_file() {
+        let pom = "<project>\n  <properties>\n    <!-- versions -->\n    <java.version>17</java.version>\n    <slf4j.version>2.0.13</slf4j.version>\n    <empty/>\n    <guava.version>33.2.1-jre</guava.version>\n  </properties>\n  <dependencyManagement><dependencies>\n    <dependency>\n      <groupId>org.slf4j</groupId>\n      <artifactId>slf4j-api</artifactId>\n      <version>${slf4j.version}</version>\n    </dependency>\n  </dependencies></dependencyManagement>\n  <dependencies>\n    <dependency>\n      <groupId>org.slf4j</groupId>\n      <artifactId>slf4j-api</artifactId>\n      <version>${slf4j.version}</version>\n    </dependency>\n    <dependency>\n      <groupId>com.google.guava</groupId>\n      <artifactId>guava</artifactId>\n      <version>${guava.version}</version>\n    </dependency>\n    <dependency>\n      <groupId>org.example</groupId>\n      <artifactId>sibling</artifactId>\n      <version>${project.version}</version>\n    </dependency>\n  </dependencies>\n</project>\n";
+        assert_eq!(
+            found("pom.xml", pom),
+            [
+                entry("org.slf4j:slf4j-api", "2.0.13", Some(true)),
+                entry("com.google.guava:guava", "33.2.1-jre", Some(true)),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_gradle_build_files_and_catalogs() {
+        let groovy = "plugins {\n    id 'java'\n}\n\ndependencies {\n    implementation 'com.google.guava:guava:33.2.1-jre'\n    // implementation 'commented:out:1.0'\n    testImplementation(\"org.junit.jupiter:junit-jupiter:5.10.2\")\n    implementation \"org.slf4j:slf4j-api:$slf4jVersion\"\n    runtimeOnly 'org.postgresql:postgresql'\n    implementation project(':core')\n    implementation 'com.google.guava:guava:33.2.1-jre'\n}\n";
+        assert_eq!(
+            found("build.gradle", groovy),
+            [
+                entry("org.junit.jupiter:junit-jupiter", "5.10.2", Some(true)),
+                entry("com.google.guava:guava", "33.2.1-jre", Some(true)),
+            ]
+        );
+
+        let catalog = "[versions]\nkotlin = \"2.0.0\"\nokhttp = \"4.12.0\"\nranged = { strictly = \"1.0\" }\n\n[libraries]\nkotlin-stdlib = { module = \"org.jetbrains.kotlin:kotlin-stdlib\", version.ref = \"kotlin\" }\nokhttp = { group = \"com.squareup.okhttp3\", name = \"okhttp\", version.ref = \"okhttp\" }\nguava = \"com.google.guava:guava:33.2.1-jre\"\ngson = { module = \"com.google.code.gson:gson\", version = \"2.11.0\" }\nbom-managed = { module = \"org.example:no-version\" }\n\n[plugins]\nkotlin-jvm = { id = \"org.jetbrains.kotlin.jvm\", version.ref = \"kotlin\" }\n";
+        assert_eq!(
+            found("libs.versions.toml", catalog),
+            [
+                entry("org.jetbrains.kotlin:kotlin-stdlib", "2.0.0", Some(true)),
+                entry("com.squareup.okhttp3:okhttp", "4.12.0", Some(true)),
+                entry("com.google.guava:guava", "33.2.1-jre", Some(true)),
+                entry("com.google.code.gson:gson", "2.11.0", Some(true)),
             ]
         );
     }
