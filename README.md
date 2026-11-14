@@ -2,7 +2,7 @@
 
 _by [Bene Pankratz (@Beneking102)](https://github.com/Beneking102) · [benedikt-pkr.info](https://benedikt-pkr.info)_
 
-**Behavioral diff and patch management for npm updates.** See what a new version *does* at install and import time that the old one did not, and get a plan for which updates are safe to apply.
+**Behavioral diff and patch management for npm and PyPI packages.** See what a new version *does* at install and import time that the old one did not, and get a plan for which updates are safe to apply.
 
 ![pkgsnitch reporting a simulated hijacked patch release](docs/demo.svg)
 
@@ -18,6 +18,8 @@ A source diff shows what changed in the code. pkgsnitch shows what changed in th
 | Review a dependency pull request | `pkgsnitch lock <old-lock> <new-lock>` |
 | Check your own release before publishing | `pkgsnitch diff old.tgz new.tgz` |
 
+For Python, prefix the package with `pypi:`, as in `pkgsnitch diff pypi:requests 2.31.0 2.32.3`.
+
 ## Install
 
 Requires Docker. Download a binary from the [releases](https://github.com/Beneking102/pkgsnitch/releases), or build it:
@@ -32,9 +34,9 @@ The sandbox image is built on first use.
 
 Each version runs in a throwaway container, in three phases:
 
-1. **Fetch.** `npm install --ignore-scripts` downloads the package. No package code runs while the network is up.
-2. **Install.** The network is cut. `npm rebuild` runs every lifecycle script under `strace`.
-3. **Import.** The entry point is loaded with `import()`, again under `strace`.
+1. **Fetch.** The package is downloaded without running any of its code (`npm install --ignore-scripts`, or `pip download --only-binary`).
+2. **Install.** The network is cut. The install runs under `strace`: npm lifecycle scripts, or the build script of a Python source distribution.
+3. **Import.** The entry point is loaded, again under `strace`.
 
 While package code runs, a sinkhole answers all DNS and accepts connections on ports 80 and 443, so code that phones home reveals the host it wanted and nothing leaves the machine. The home directory and the environment hold worthless honeytoken credentials, so code that looks for secrets finds something to take. Each carries a marker: if it turns up again in a request, a DNS name or a command line, that is reported as exfiltration. The tracer runs as root and the package as an unprivileged user, so the evidence is out of the package's reach.
 
@@ -110,7 +112,7 @@ On 30 real updates of widely used packages (lodash, express, typescript, next, v
 - **It observes, it does not prove.** Code that waits for a date, checks for CI, or triggers only on a specific call stays quiet in a short run. A clean report means "nothing new was observed", not "safe".
 - **Only install and import are exercised.** With the network cut, an install script that downloads a binary fails there: the attempt is reported, what the binary would do is not.
 - **Sandbox detection is possible**, and a container is not a hard boundary against kernel exploits. Run pkgsnitch where that is acceptable, such as a CI runner.
-- **npm only**, for now.
+- **PyPI is newer than npm here.** `diff` and `scan` work for both; `updates`, `lock` and local archives are npm only. A Python package without a wheel is installed without its dependencies.
 
 To try it without Docker, replay the recorded demo: `cargo run -- compare-dirs tests/fixtures/demo-old tests/fixtures/demo-new`. The demo package in `demo/` is harmless by construction. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 

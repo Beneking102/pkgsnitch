@@ -47,7 +47,7 @@ struct Cli {
 enum Cmd {
     /// Show what a new version does that the old one did not
     #[command(
-        after_help = "Examples:\n  pkgsnitch diff left-pad 1.2.0 1.3.0\n  pkgsnitch diff ./pkg-1.0.0.tgz ./pkg-1.0.1.tgz"
+        after_help = "Examples:\n  pkgsnitch diff left-pad 1.2.0 1.3.0\n  pkgsnitch diff pypi:requests 2.31.0 2.32.3\n  pkgsnitch diff ./pkg-1.0.0.tgz ./pkg-1.0.1.tgz"
     )]
     Diff {
         /// `<package> <old-version> <new-version>`, or two `npm pack` tarballs
@@ -58,7 +58,7 @@ enum Cmd {
     },
     /// Show what a single version does at install and import time
     #[command(
-        after_help = "Examples:\n  pkgsnitch scan esbuild@0.21.5\n  pkgsnitch scan ./my-package-1.0.0.tgz"
+        after_help = "Examples:\n  pkgsnitch scan esbuild@0.21.5\n  pkgsnitch scan pypi:requests==2.32.3\n  pkgsnitch scan ./my-package-1.0.0.tgz"
     )]
     Scan {
         /// `name`, `name@version` or a tarball
@@ -507,6 +507,43 @@ mod tests {
         assert!(validate("a; rm -rf /", "package name").is_err());
         assert!(validate("$(id)", "version").is_err());
         assert!(validate("", "version").is_err());
+    }
+
+    #[test]
+    fn recognizes_python_packages() {
+        let pypi = |name: &str, version: Option<&str>| Target::Registry {
+            ecosystem: Ecosystem::PyPI,
+            name: name.into(),
+            version: version.map(str::to_string),
+        };
+        assert_eq!(
+            scan_target("pypi:requests==2.32.3").unwrap(),
+            pypi("requests", Some("2.32.3"))
+        );
+        assert_eq!(
+            scan_target("pypi:requests@2.32.3").unwrap(),
+            pypi("requests", Some("2.32.3"))
+        );
+        assert_eq!(
+            scan_target("pypi:requests").unwrap(),
+            pypi("requests", None)
+        );
+        assert_eq!(
+            scan_target("pypi:requests==2.32.3").unwrap().label(),
+            "pypi:requests==2.32.3"
+        );
+        assert_eq!(
+            scan_target("npm:left-pad@1.3.0").unwrap().label(),
+            "left-pad@1.3.0"
+        );
+
+        let args: Vec<String> = ["pypi:idna", "3.6", "3.7"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (old, new) = diff_targets(&args).unwrap();
+        assert_eq!(old, pypi("idna", Some("3.6")));
+        assert_eq!(new.ecosystem(), Ecosystem::PyPI);
     }
 
     #[test]
