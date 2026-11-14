@@ -2,7 +2,7 @@
 name = "pkgsnitch"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 description = "Behavioral diff for package updates: see what a new version does at install and import time that the old one did not."
 authors = ["Bene Pankratz"]
 license = "MIT"
