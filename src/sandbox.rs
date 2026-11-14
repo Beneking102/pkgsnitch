@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use tempfile::TempDir;
 
+use crate::plan::Available;
+
 const ASSETS: &[(&str, &str)] = &[
     ("Dockerfile", include_str!("../sandbox/Dockerfile")),
     ("probe.js", include_str!("../sandbox/probe.js")),
@@ -205,28 +207,38 @@ impl Sandbox {
 
         // Phases 1 and 2: run the code, watched. The tracer is root; the code
         // it starts is the unprivileged user.
-        self.run(&[
-            "exec",
-            "--user",
-            "root",
-            id,
-            "/opt/pkgsnitch/trace.sh",
-            &timeout,
-        ])?;
+        let trace = |phase: &str| {
+            self.run(&[
+                "exec",
+                "--user",
+                "root",
+                id,
+                "/opt/pkgsnitch/trace.sh",
+                &timeout,
+                phase,
+            ])
+        };
+        trace("install")?;
+        // Anything the install phase left running must not act during the
+        // import phase. `kill -1` as that user ends all of its processes,
+        // including the kill itself, hence no check of the result.
+        let _ = self.run(&["exec", "--user", "dev", id, "sh", "-c", "kill -9 -1"]);
+        trace("import")?;
 
         let dir = tempfile::tempdir()?;
         self.copy_out(id, "/probe/.", dir.path())?;
         Ok(RawRun { dir })
     }
 
-    /// Ask the registry for the newest published version of each package.
-    /// Packages the registry does not know are left out of the result.
-    pub fn latest_versions(&self, names: &[String]) -> Result<BTreeMap<String, String>> {
+    /// Ask the registry which versions of each package exist. Packages it
+    /// does not know are left out of the result.
+    pub fn available_versions(&self, names: &[String]) -> Result<BTreeMap<String, Available>> {
         if names.is_empty() {
             return Ok(BTreeMap::new());
         }
         // The lookup runs in the sandbox, so the host needs no npm of its own.
-        const SCRIPT: &str = r#"for p in "$@"; do v=$(npm view -- "$p" version 2>/dev/null) && printf '%s %s\n' "$p" "$v"; done"#;
+        // One line per package: its name, a tab, and npm's JSON on one line.
+        const SCRIPT: &str = r#"for p in "$@"; do v=$(npm view --json -- "$p" dist-tags.latest versions 2>/dev/null | tr -d '\n') && printf '%s\t%s\n' "$p" "$v"; done"#;
         let container = Container::start(self)?;
         let mut args = vec![
             "exec",
@@ -242,8 +254,8 @@ impl Sandbox {
         let out = self.run(&args).context("could not query the registry")?;
         Ok(String::from_utf8_lossy(&out.stdout)
             .lines()
-            .filter_map(|line| line.split_once(' '))
-            .map(|(name, version)| (name.to_string(), version.trim().to_string()))
+            .filter_map(|line| line.split_once('\t'))
+            .filter_map(|(name, json)| Some((name.to_string(), Available::parse(json)?)))
             .collect())
     }
 

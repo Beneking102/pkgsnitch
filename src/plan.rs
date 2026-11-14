@@ -207,13 +207,78 @@ pub fn changes(old: &Lock, new: &Lock) -> Vec<Update> {
     out
 }
 
+/// What the registry offers for one package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Available {
+    /// The version the `latest` tag points at.
+    pub latest: String,
+    pub versions: Vec<String>,
+}
+
+impl Available {
+    /// Parse the output of `npm view --json <pkg> dist-tags.latest versions`.
+    pub fn parse(json: &str) -> Option<Self> {
+        let value: Value = serde_json::from_str(json).ok()?;
+        let latest = value.get("dist-tags.latest")?.as_str()?.to_string();
+        // npm prints a bare string instead of a list for a single version.
+        let versions = match value.get("versions") {
+            Some(Value::Array(list)) => list
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+            Some(Value::String(only)) => vec![only.clone()],
+            _ => vec![latest.clone()],
+        };
+        Some(Self { latest, versions })
+    }
+
+    /// The newest stable version above `installed` that stays within
+    /// `level` and does not go past what the maintainers call latest.
+    fn pick(&self, installed: &str, level: Level) -> Option<&str> {
+        let (current, _) = semver(installed)?;
+        self.versions
+            .iter()
+            .map(String::as_str)
+            .filter(|v| {
+                let Some((candidate, pre)) = semver(v) else {
+                    return false;
+                };
+                pre.is_empty()
+                    && order(installed, v) == Ordering::Less
+                    && order(v, &self.latest) != Ordering::Greater
+                    && match level {
+                        Level::Patch => candidate[..2] == current[..2],
+                        Level::Minor => candidate[0] == current[0],
+                        Level::Major => true,
+                    }
+            })
+            .max_by(|a, b| order(a, b))
+    }
+}
+
+/// The largest version jump `updates` may propose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Level {
+    /// Bug fixes only: 1.2.3 to 1.2.9
+    Patch,
+    /// New features too: 1.2.3 to 1.9.0
+    Minor,
+    /// Anything up to the latest release
+    Major,
+}
+
 /// Direct dependencies for which the registry has something newer.
-pub fn outdated(lock: &Lock, latest: &BTreeMap<String, String>, include_dev: bool) -> Vec<Update> {
+pub fn outdated(
+    lock: &Lock,
+    available: &BTreeMap<String, Available>,
+    level: Level,
+    include_dev: bool,
+) -> Vec<Update> {
     lock.direct(include_dev)
         .filter_map(|(name, installed)| {
-            let newest = latest.get(name)?;
-            (order(installed, newest) == Ordering::Less)
-                .then(|| Update::new(name, Some(installed), newest, true))
+            let newer = available.get(name)?.pick(installed, level)?;
+            Some(Update::new(name, Some(installed), newer, true))
         })
         .collect()
 }
@@ -588,15 +653,67 @@ mod tests {
                 ("node_modules/d", "3.0.0"),
             ],
         );
-        let latest: BTreeMap<String, String> = [("a", "1.4.0"), ("b", "2.0.0"), ("d", "4.0.0")]
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
+        let offer = |latest: &str, versions: &[&str]| Available {
+            latest: latest.into(),
+            versions: versions.iter().map(|v| v.to_string()).collect(),
+        };
+        let available: BTreeMap<String, Available> = [
+            (
+                "a",
+                offer(
+                    "2.1.0",
+                    &[
+                        "1.0.0",
+                        "1.0.5",
+                        "1.4.0",
+                        "2.0.0",
+                        "2.1.0",
+                        "3.0.0-rc.1",
+                        "3.0.0",
+                    ],
+                ),
+            ),
+            ("b", offer("2.0.0", &["1.9.0", "2.0.0"])),
+            ("d", offer("4.0.0", &["3.0.0", "4.0.0"])),
+        ]
+        .into_iter()
+        .map(|(name, offer)| (name.to_string(), offer))
+        .collect();
+
+        let to = |level, dev| -> Vec<(String, String)> {
+            outdated(&l, &available, level, dev)
+                .into_iter()
+                .map(|u| (u.name, u.to))
+                .collect()
+        };
+        // 3.0.0 exists but is beyond the `latest` tag, so it is never proposed.
         assert_eq!(
-            outdated(&l, &latest, false),
-            [Update::new("a", Some("1.0.0"), "1.4.0", true)]
+            to(Level::Major, false),
+            [("a".to_string(), "2.1.0".to_string())]
         );
-        assert_eq!(outdated(&l, &latest, true).len(), 2);
+        assert_eq!(
+            to(Level::Minor, false),
+            [("a".to_string(), "1.4.0".to_string())]
+        );
+        assert_eq!(
+            to(Level::Patch, false),
+            [("a".to_string(), "1.0.5".to_string())]
+        );
+        assert_eq!(to(Level::Major, true).len(), 2);
+        assert!(to(Level::Patch, true).iter().all(|(name, _)| name == "a"));
+    }
+
+    #[test]
+    fn parses_registry_answers() {
+        let many = Available::parse(r#"{"dist-tags.latest":"1.3.0","versions":["1.2.0","1.3.0"]}"#)
+            .unwrap();
+        assert_eq!(many.latest, "1.3.0");
+        assert_eq!(many.versions, ["1.2.0", "1.3.0"]);
+        let single =
+            Available::parse(r#"{"dist-tags.latest":"0.0.1","versions":"0.0.1"}"#).unwrap();
+        assert_eq!(single.versions, ["0.0.1"]);
+        assert!(Available::parse("").is_none());
+        assert!(Available::parse("{}").is_none());
     }
 
     #[test]

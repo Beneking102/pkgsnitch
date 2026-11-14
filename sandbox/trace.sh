@@ -1,13 +1,14 @@
 #!/bin/sh
 # Phases 1 and 2: run the package's code under strace, with the network gone.
 #
-#   trace.sh <timeout-seconds>
+#   trace.sh <timeout-seconds> <install|import>
 #
 # Runs as root so that the evidence lands in /probe, which the observed code
 # cannot write to. The code itself runs as the unprivileged user `dev`
 # (`strace -u`), without any capabilities.
 set -u
 limit="$1"
+phase="$2"
 # Copied here by the orchestrator before any package code had a chance to run.
 name=$(cat /probe/name)
 
@@ -19,10 +20,8 @@ SYSCALLS=$SYSCALLS,chmod,fchmodat,truncate,mkdir,mkdirat,link,linkat,symlink,sym
 
 now() { date +%s%3N; }
 
-# observe <phase> <command...>
+# observe <command...>
 observe() {
-    phase="$1"
-    shift
     start=$(now)
     timeout -k 5 "$limit" strace -u dev -f -qq -y -s 256 -e trace="$SYSCALLS" -o "/probe/$phase.trace" "$@" \
         > "/probe/$phase.log" 2>&1
@@ -31,15 +30,22 @@ observe() {
 }
 
 cd /work
-: > /probe/times
 
-# Phase 1: lifecycle scripts of the package and everything it pulled in.
-observe install npm rebuild --foreground-scripts
-
-# Phase 2: load the entry point. Works for CommonJS and ES modules alike;
-# the short wait gives deferred code (timers, microtasks) a chance to act.
-target="${name:-node:path}"
-observe import node -e '
+case "$phase" in
+install)
+    # Lifecycle scripts of the package and everything it pulled in.
+    observe npm rebuild --foreground-scripts
+    ;;
+import)
+    # Load the entry point. Works for CommonJS and ES modules alike; the
+    # short wait gives deferred code (timers, microtasks) a chance to act.
+    observe node -e '
 const done = () => setTimeout(() => process.exit(0), 2000);
 import(process.argv[1]).then(done, done);
-' "$target"
+' "${name:-node:path}"
+    ;;
+*)
+    echo "unknown phase: $phase" >&2
+    exit 2
+    ;;
+esac

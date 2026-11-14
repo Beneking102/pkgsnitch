@@ -16,6 +16,7 @@ mod strace;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Mutex;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -23,7 +24,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::allow::Allowlist;
 use crate::diff::Mode;
 use crate::model::{Profile, Report, Severity};
-use crate::plan::{Outcome, Plan, Update};
+use crate::plan::{Level, Outcome, Plan, Update};
 use crate::profile::Cache;
 use crate::report::Format;
 use crate::sandbox::{Sandbox, Target};
@@ -75,6 +76,9 @@ enum Cmd {
         /// Include devDependencies
         #[arg(long)]
         dev: bool,
+        /// Largest version jump to propose
+        #[arg(long, value_enum, default_value = "major")]
+        level: Level,
         /// Evaluate at most this many updates
         #[arg(long, default_value_t = 20)]
         max: usize,
@@ -127,6 +131,9 @@ struct Options {
     /// Observe again even if a cached result exists
     #[arg(long)]
     no_cache: bool,
+    /// `updates` and `lock`: evaluate this many updates at once
+    #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=16))]
+    jobs: u8,
     /// File of accepted behaviors [default: .pkgsnitch-allow if present]
     #[arg(long, value_name = "FILE")]
     allow: Option<PathBuf>,
@@ -185,6 +192,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Updates {
             dir,
             dev,
+            level,
             max,
             opts,
         } => {
@@ -199,8 +207,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     "  asking the registry about {} dependencies...",
                     names.len()
                 );
-                let latest = session.sandbox.latest_versions(&names)?;
-                let updates = plan::outdated(&lock, &latest, dev);
+                let available = session.sandbox.available_versions(&names)?;
+                let updates = plan::outdated(&lock, &available, level, dev);
                 evaluate(session, updates, max, true, &opts)
             })
         }
@@ -246,17 +254,28 @@ fn evaluate(
 ) -> Result<ExitCode> {
     let allow = Allowlist::load(opts.allow.as_deref())?;
     let skipped = updates.len().saturating_sub(max);
-    let outcomes = updates
-        .into_iter()
-        .take(max)
-        .map(|update| {
-            let result = session.observe_update(&update).map(|mut report| {
-                allow.apply(&mut report);
-                report
+    // A small pool of workers takes updates off a shared queue; results are
+    // put back in their original order.
+    let queue = Mutex::new(updates.into_iter().take(max).enumerate());
+    let done = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..opts.jobs {
+            scope.spawn(|| loop {
+                let next = queue.lock().expect("queue lock").next();
+                let Some((index, update)) = next else { break };
+                let result = session.observe_update(&update).map(|mut report| {
+                    allow.apply(&mut report);
+                    report
+                });
+                done.lock()
+                    .expect("result lock")
+                    .push((index, Outcome::new(update, result)));
             });
-            Outcome::new(update, result)
-        })
-        .collect();
+        }
+    });
+    let mut done = done.into_inner().expect("result lock");
+    done.sort_by_key(|(index, _)| *index);
+    let outcomes = done.into_iter().map(|(_, outcome)| outcome).collect();
     Ok(print_plan(
         Plan::new(outcomes, skipped, suggest_command),
         opts,
@@ -378,10 +397,7 @@ fn tarball(arg: &str) -> Result<Target> {
     if !path.is_file() {
         bail!("`{arg}` is not a file");
     }
-    Ok(Target::Tarball(
-        path.canonicalize()
-            .with_context(|| format!("resolving `{arg}`"))?,
-    ))
+    Ok(Target::Tarball(path.to_path_buf()))
 }
 
 /// Split `name@version`, keeping the leading `@` of scoped packages.
