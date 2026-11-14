@@ -209,6 +209,10 @@ pub fn rate(b: &Behavior) -> (Severity, String) {
                 (Severity::High, format!("{verb} outside the project"))
             }
         }
+        Kind::Exfil => (
+            Severity::Critical,
+            "sends a planted secret out: proof that credentials are being stolen".into(),
+        ),
         Kind::Exec => {
             let program = t.split_whitespace().next().unwrap_or("");
             if NETWORK_TOOLS.contains(&program) {
@@ -233,6 +237,7 @@ pub fn kind_title(kind: Kind) -> &'static str {
         Kind::Read => "reads file",
         Kind::Write => "writes file",
         Kind::Delete => "deletes file",
+        Kind::Exfil => "exfiltrates secret",
     }
 }
 

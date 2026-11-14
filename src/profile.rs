@@ -9,8 +9,10 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::canary;
 use crate::extract::{self, Behaviors};
 use crate::model::{Behavior, Kind, Manifest, Observed, Phase, PhaseStat, Profile};
+use crate::rules;
 
 const PHASES: [Phase; 2] = [Phase::Install, Phase::Import];
 const LIFECYCLE: [&str; 3] = ["preinstall", "install", "postinstall"];
@@ -59,14 +61,22 @@ pub fn build(dir: &Path) -> Result<Profile> {
             continue;
         };
         if let Some((kind, target)) = event.describe() {
-            *behaviors
-                .entry(Behavior {
+            let mut record = |kind, target| {
+                let behavior = Behavior {
                     phase,
                     kind,
                     target,
                     actor: String::new(),
-                })
-                .or_insert(0) += 1;
+                };
+                *behaviors.entry(behavior).or_insert(0) += 1;
+            };
+            if event.carries_secret() {
+                record(
+                    Kind::Exfil,
+                    format!("{}: {target}", rules::kind_title(kind)),
+                );
+            }
+            record(kind, target);
         }
     }
 
@@ -99,9 +109,20 @@ struct NetEvent {
     method: Option<String>,
     path: Option<String>,
     port: Option<u16>,
+    /// The first bytes the client sent, for unencrypted connections.
+    data: Option<String>,
 }
 
 impl NetEvent {
+    /// Whether a planted secret shows up in the name asked for or the
+    /// bytes sent.
+    fn carries_secret(&self) -> bool {
+        [&self.name, &self.host, &self.path, &self.data]
+            .into_iter()
+            .flatten()
+            .any(|text| canary::leaked(text))
+    }
+
     fn describe(&self) -> Option<(Kind, String)> {
         let port = self.port.unwrap_or(0);
         match self.t.as_str() {

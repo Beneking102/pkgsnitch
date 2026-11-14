@@ -17,4 +17,5 @@ RUN chmod 0555 /opt/pkgsnitch/*.sh
 
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
 WORKDIR /work
-CMD ["sleep", "infinity"]
+# A sandbox that is never torn down (the host was interrupted) ends itself.
+CMD ["sleep", "3600"]

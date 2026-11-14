@@ -14,6 +14,13 @@ name=$(cat /probe/name)
 
 export HOME=/home/dev USER=dev LOGNAME=dev
 
+# Secrets in the environment, where CI systems put them. They carry the same
+# marker as the honeytoken files (see src/canary.rs).
+CANARY=pkgsnitchCanary7f3a9c51d2
+export NPM_TOKEN="npm_$CANARY" NODE_AUTH_TOKEN="npm_$CANARY"
+export GITHUB_TOKEN="ghp_$CANARY" GH_TOKEN="ghp_$CANARY"
+export AWS_ACCESS_KEY_ID=AKIAPKGSNITCHHONEY00 AWS_SECRET_ACCESS_KEY="$CANARY"
+
 SYSCALLS=execve,execveat,clone,clone3,fork,vfork,chdir,connect,sendto,sendmsg,sendmmsg
 SYSCALLS=$SYSCALLS,open,openat,openat2,creat,unlink,unlinkat,rmdir,rename,renameat,renameat2
 SYSCALLS=$SYSCALLS,chmod,fchmodat,truncate,mkdir,mkdirat,link,linkat,symlink,symlinkat

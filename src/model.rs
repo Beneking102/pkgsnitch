@@ -68,6 +68,9 @@ pub enum Kind {
     Read,
     Write,
     Delete,
+    /// A planted secret was seen leaving: in a command line, a DNS name
+    /// or a network payload.
+    Exfil,
 }
 
 /// One normalized, comparable thing a package did.

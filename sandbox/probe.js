@@ -57,6 +57,9 @@ function dnsServer(type, address) {
   sock.bind(53, address);
 }
 
+// How much of an unencrypted request is kept, to spot planted secrets in it.
+const SAMPLE = 2048;
+
 // --- TCP sink ---------------------------------------------------------------
 
 function serverName(hello) {
@@ -93,9 +96,9 @@ function classify(data, port) {
   const request = /^([A-Z]{3,8}) (\S+) HTTP\/1\.[01]\r?\n/.exec(text);
   if (request) {
     const host = /\r?\nhost:[ \t]*([^\r\n]+)/i.exec(text);
-    return { t: 'http', port, method: request[1], path: request[2].slice(0, 200), host: host ? host[1].trim() : null };
+    return { t: 'http', port, method: request[1], path: request[2].slice(0, 200), host: host ? host[1].trim() : null, data: text.slice(0, SAMPLE) };
   }
-  return { t: 'tcp', port, bytes: data.length };
+  return { t: 'tcp', port, bytes: data.length, data: text.slice(0, SAMPLE) };
 }
 
 function sink(port) {

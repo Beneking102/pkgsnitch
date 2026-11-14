@@ -4,6 +4,7 @@
 //! each does at install and import time, and reports what is new.
 
 mod allow;
+mod canary;
 mod diff;
 mod extract;
 mod model;

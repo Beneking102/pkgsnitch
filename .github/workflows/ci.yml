@@ -43,6 +43,9 @@ jobs:
           jq -e '.findings[] | select(.title == "reads file" and (.target | contains(".ssh/id_rsa")))' report.json
           jq -e '.findings[] | select(.title == "DNS lookup" and (.target | contains("pkgsnitch-demo.invalid")))' report.json
           jq -e '.findings[] | select(.title == "runs command" and (.target | startswith("curl ")))' report.json
+          # The planted token must be seen leaving, in the request body and as a DNS name.
+          jq -e '.findings[] | select(.title == "exfiltrates secret" and (.target | startswith("HTTP request")))' report.json
+          jq -e '.findings[] | select(.title == "exfiltrates secret" and (.target | startswith("DNS lookup")))' report.json
       - name: An unchanged release must be clean
         run: |
           target/release/pkgsnitch diff \

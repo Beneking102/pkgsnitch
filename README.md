@@ -36,7 +36,7 @@ Each version runs in a throwaway container, in three phases:
 2. **Install.** The network is cut. `npm rebuild` runs every lifecycle script under `strace`.
 3. **Import.** The entry point is loaded with `import()`, again under `strace`.
 
-While package code runs, a sinkhole answers all DNS and accepts connections on ports 80 and 443, so code that phones home reveals the host it wanted and nothing leaves the machine. The home directory holds worthless honeytoken credentials, so code that looks for secrets finds something to open. The tracer runs as root and the package as an unprivileged user, so the evidence is out of the package's reach.
+While package code runs, a sinkhole answers all DNS and accepts connections on ports 80 and 443, so code that phones home reveals the host it wanted and nothing leaves the machine. The home directory and the environment hold worthless honeytoken credentials, so code that looks for secrets finds something to take. Each carries a marker: if it turns up again in a request, a DNS name or a command line, that is reported as exfiltration. The tracer runs as root and the package as an unprivileged user, so the evidence is out of the package's reach.
 
 The traces are reduced to behaviors (sensitive files read, unexpected writes, processes started, network activity), each attributed to the command responsible. Comparing two versions as sets cancels everything npm and node do on their own; what remains is rated.
 
@@ -96,7 +96,7 @@ esbuild       runs command: esbuild --version
 
 | Severity | Examples |
 |---|---|
-| critical | reads SSH keys or cloud credentials; writes a shell profile, cron entry or git hook; runs `curl`, `wget`, `nc` |
+| critical | sends a planted secret anywhere; reads SSH keys or cloud credentials; writes a shell profile, cron entry or git hook; runs `curl`, `wget`, `nc` |
 | high | any network activity; a new install script; reads `~/.npmrc`; writes in the home directory |
 | medium | starts a process; a changed install script; a new dependency with an install script |
 | low | a new dependency |

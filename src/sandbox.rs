@@ -305,6 +305,9 @@ impl<'a> Container<'a> {
             .run(&[
                 "run",
                 "--detach",
+                // Removed by the engine once it stops, even if pkgsnitch
+                // itself was interrupted and could not clean up.
+                "--rm",
                 "--name",
                 &id,
                 "--label",
