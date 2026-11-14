@@ -126,3 +126,32 @@ fn markdown_report_is_ready_for_a_pull_request() {
     assert!(text.contains("**Verdict: critical**"));
     assert!(text.contains("| **critical** | install | runs command |"));
 }
+
+#[test]
+fn allowlist_accepts_reviewed_behavior() {
+    let dir = std::env::temp_dir().join(format!("pkgsnitch-allow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("allow");
+
+    // Accepting everything this package does turns the verdict to info...
+    std::fs::write(&file, "pkgsnitch-demo-leftpad reads file: *\npkgsnitch-demo-leftpad runs command: *\npkgsnitch-demo-leftpad install script added: *\n").unwrap();
+    let out = compare(
+        "demo-old",
+        "demo-new",
+        &["--format", "json", "--allow", file.to_str().unwrap()],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["verdict"], "info");
+    assert!(report["findings"][0]["why"]
+        .as_str()
+        .unwrap()
+        .starts_with("accepted by "));
+
+    // ...while a rule for another package changes nothing.
+    std::fs::write(&file, "some-other-package runs command: *\n").unwrap();
+    let out = compare("demo-old", "demo-new", &["--allow", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -3,6 +3,7 @@
 //! Installs two versions of a package in a throwaway sandbox, watches what
 //! each does at install and import time, and reports what is new.
 
+mod allow;
 mod diff;
 mod extract;
 mod model;
@@ -19,6 +20,7 @@ use std::process::ExitCode;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+use crate::allow::Allowlist;
 use crate::diff::Mode;
 use crate::model::{Profile, Report, Severity};
 use crate::plan::{Outcome, Plan, Update};
@@ -125,6 +127,9 @@ struct Options {
     /// Observe again even if a cached result exists
     #[arg(long)]
     no_cache: bool,
+    /// File of accepted behaviors [default: .pkgsnitch-allow if present]
+    #[arg(long, value_name = "FILE")]
+    allow: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -148,7 +153,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 profile::build(&old).with_context(|| format!("analyzing {}", old.display()))?;
             let after =
                 profile::build(&new).with_context(|| format!("analyzing {}", new.display()))?;
-            let report = diff::compare(&before, &after, Mode::Update);
+            let mut report = diff::compare(&before, &after, Mode::Update);
+            Allowlist::load(opts.allow.as_deref())?.apply(&mut report);
             anstream::print!("{}", report::render(&report, opts.format));
             Ok(exit_code(report.verdict, &opts))
         }
@@ -173,7 +179,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 return Ok(print_plan(Plan::new(Vec::new(), 0, false), &opts));
             }
             with_session(&opts, |session| {
-                Ok(evaluate(session, updates, max, false, &opts))
+                evaluate(session, updates, max, false, &opts)
             })
         }
         Cmd::Updates {
@@ -195,7 +201,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 );
                 let latest = session.sandbox.latest_versions(&names)?;
                 let updates = plan::outdated(&lock, &latest, dev);
-                Ok(evaluate(session, updates, max, true, &opts))
+                evaluate(session, updates, max, true, &opts)
             })
         }
     }
@@ -222,7 +228,9 @@ fn with_session<T>(opts: &Options, work: impl FnOnce(&Session) -> Result<T>) -> 
 
 /// `diff` and `scan`: one comparison, printed in full.
 fn single(old: &Target, new: &Target, mode: Mode, opts: &Options) -> Result<ExitCode> {
-    let report = with_session(opts, |session| session.compare(old, new, mode))?;
+    let allow = Allowlist::load(opts.allow.as_deref())?;
+    let mut report = with_session(opts, |session| session.compare(old, new, mode))?;
+    allow.apply(&mut report);
     anstream::print!("{}", report::render(&report, opts.format));
     Ok(exit_code(report.verdict, opts))
 }
@@ -235,17 +243,24 @@ fn evaluate(
     max: usize,
     suggest_command: bool,
     opts: &Options,
-) -> ExitCode {
+) -> Result<ExitCode> {
+    let allow = Allowlist::load(opts.allow.as_deref())?;
     let skipped = updates.len().saturating_sub(max);
     let outcomes = updates
         .into_iter()
         .take(max)
         .map(|update| {
-            let result = session.observe_update(&update);
+            let result = session.observe_update(&update).map(|mut report| {
+                allow.apply(&mut report);
+                report
+            });
             Outcome::new(update, result)
         })
         .collect();
-    print_plan(Plan::new(outcomes, skipped, suggest_command), opts)
+    Ok(print_plan(
+        Plan::new(outcomes, skipped, suggest_command),
+        opts,
+    ))
 }
 
 fn print_plan(plan: Plan, opts: &Options) -> ExitCode {
