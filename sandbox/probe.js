@@ -59,6 +59,8 @@ function dnsServer(type, address) {
 
 // How much of an unencrypted request is kept, to spot planted secrets in it.
 const SAMPLE = 2048;
+// How long to wait for the rest of a request after its first bytes.
+const COLLECT_MS = 300;
 
 // --- TCP sink ---------------------------------------------------------------
 
@@ -105,10 +107,22 @@ function sink(port) {
   const server = net.createServer((sock) => {
     sock.setTimeout(3000, () => sock.destroy());
     sock.on('error', () => {});
-    sock.once('data', (data) => {
-      log(classify(data, port));
+    // A client may send headers and body in separate writes. Collect for a
+    // moment, so that a secret in the body is part of what gets logged.
+    const chunks = [];
+    let size = 0;
+    const finish = () => {
+      if (sock.destroyed) return;
+      log(classify(Buffer.concat(chunks), port));
       sock.destroy();
+    };
+    sock.on('data', (data) => {
+      if (chunks.length === 0) setTimeout(finish, COLLECT_MS);
+      chunks.push(data);
+      size += data.length;
+      if (size >= SAMPLE) finish();
     });
+    sock.on('end', () => chunks.length && finish());
   });
   server.on('error', () => {});
   server.listen(port, '0.0.0.0');
