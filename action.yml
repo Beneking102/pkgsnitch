@@ -18,6 +18,12 @@ inputs:
   max:
     description: Evaluate at most this many changed packages.
     default: "20"
+  comment:
+    description: Post the report as a pull request comment, updated in place on later runs. Needs `pull-requests: write`.
+    default: "true"
+  token:
+    description: Token used to comment.
+    default: ${{ github.token }}
 
 outputs:
   report:
@@ -40,6 +46,9 @@ runs:
         BASE_REF: ${{ inputs.base-ref || github.base_ref }}
         FAIL_ON: ${{ inputs.fail-on }}
         MAX: ${{ inputs.max }}
+        COMMENT: ${{ inputs.comment }}
+        PR: ${{ github.event.pull_request.number }}
+        GH_TOKEN: ${{ inputs.token }}
       run: |
         if [ -z "$BASE_REF" ]; then
           echo "::error::pkgsnitch needs a base ref: run it on pull_request events or set the base-ref input."
@@ -48,13 +57,16 @@ runs:
         git fetch --quiet --depth=1 origin "$BASE_REF"
         base="$RUNNER_TEMP/pkgsnitch-base-lock.json"
         report="$RUNNER_TEMP/pkgsnitch-report.md"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
         if ! git show "FETCH_HEAD:$LOCKFILE" > "$base" 2>/dev/null; then
           echo "No $LOCKFILE on $BASE_REF; nothing to compare." | tee "$report" >> "$GITHUB_STEP_SUMMARY"
-          echo "report=$report" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         status=0
         pkgsnitch lock "$base" "$LOCKFILE" --format markdown --fail-on "$FAIL_ON" --max "$MAX" > "$report" || status=$?
         cat "$report" >> "$GITHUB_STEP_SUMMARY"
-        echo "report=$report" >> "$GITHUB_OUTPUT"
+        if [ "$COMMENT" = true ] && [ -n "$PR" ]; then
+          gh pr comment "$PR" --body-file "$report" --edit-last --create-if-none \
+            || echo "::warning::pkgsnitch could not comment on the pull request (is pull-requests: write granted?)"
+        fi
         exit "$status"
