@@ -60,7 +60,7 @@ fn pin(registry: Registry, name: &str, version: &str, direct: Option<bool>) -> P
 }
 
 /// The file names this module understands, besides `*.csproj`.
-pub const FILES: [&str; 10] = [
+pub const FILES: [&str; 11] = [
     "composer.lock",
     "Cargo.lock",
     "go.mod",
@@ -71,6 +71,7 @@ pub const FILES: [&str; 10] = [
     "vcpkg.json",
     "conanfile.txt",
     "conan.lock",
+    "Directory.Packages.props",
 ];
 
 /// Parse a dependency file by its name, or `None` if the name is not one
@@ -87,7 +88,8 @@ pub fn read(file_name: &str, text: &str) -> Option<Vec<Pinned>> {
         "vcpkg.json" => vcpkg(text),
         "conanfile.txt" => conan_txt(text),
         "conan.lock" => conan_lock(text),
-        name if name.ends_with(".csproj") => csproj(text),
+        "Directory.Packages.props" => package_tags(text, "<PackageVersion"),
+        name if name.ends_with(".csproj") => package_tags(text, "<PackageReference"),
         _ => return None,
     })
 }
@@ -245,9 +247,11 @@ fn nuget_lock(text: &str) -> Vec<Pinned> {
     pins
 }
 
-/// .NET: `<PackageReference Include="X" Version="1.2.3" />` in a project file.
-fn csproj(text: &str) -> Vec<Pinned> {
-    text.split("<PackageReference")
+/// .NET: `<PackageReference Include="X" Version="1.2.3" />` in a project
+/// file, or `<PackageVersion ...>` where a solution pins versions centrally
+/// in `Directory.Packages.props`.
+fn package_tags(text: &str, tag: &str) -> Vec<Pinned> {
+    text.split(tag)
         .skip(1)
         .filter_map(|rest| {
             let tag = &rest[..rest.find('>')?];
@@ -441,6 +445,20 @@ mod tests {
             ]
         );
         let project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <PackageReference Include=\"Serilog\" Version=\"3.1.1\" />\n    <PackageReference Version=\"8.0.0\" Include=\"Polly\">\n      <PrivateAssets>all</PrivateAssets>\n    </PackageReference>\n    <PackageReference Include=\"Central\" />\n    <PackageReference Include=\"Ranged\" Version=\"[1.0,2.0)\" />\n  </ItemGroup>\n</Project>\n";
+        let central = "<Project>
+  <ItemGroup>
+    <PackageVersion Include=\"MediatR\" Version=\"12.4.1\" />
+    <PackageVersion Include=\"xunit\" Version=\"2.9.0\" />
+  </ItemGroup>
+</Project>
+";
+        assert_eq!(
+            found("Directory.Packages.props", central),
+            [
+                entry("MediatR", "12.4.1", Some(true)),
+                entry("xunit", "2.9.0", Some(true))
+            ]
+        );
         assert_eq!(
             found("App.csproj", project),
             [
