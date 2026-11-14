@@ -100,6 +100,8 @@ puppeteer     DNS lookup: storage.googleapis.com
 | medium | starts a process; a changed install script; a new dependency with an install script |
 | low | a new dependency |
 
+A weekly job runs pkgsnitch over the latest release of 100 widely used npm and PyPI packages; the result is at [beneking102.github.io/pkgsnitch](https://beneking102.github.io/pkgsnitch/).
+
 A rating says how alarming it is for a package to *start* doing something. A tool that has always downloaded a binary on install produces no finding on update. On 30 real updates of widely used packages (lodash, express, typescript, next, vite, prisma and others) pkgsnitch reported nothing above `info`.
 
 ## Limits

@@ -24,6 +24,8 @@ function status(outcome) {
   const verdict = outcome.report.verdict;
   if (RANK[verdict] >= 3) return { key: 'look', label: 'needs a look' };
   if (verdict === 'medium') return { key: 'new', label: 'new behavior' };
+  // New dependencies and the like: worth knowing, not worth a second look.
+  if (verdict === 'low') return { key: 'clean', label: 'minor change' };
   return { key: 'clean', label: 'nothing new' };
 }
 
@@ -115,7 +117,7 @@ const html = `<!doctype html>
   <h1>pkgsnitch watch</h1>
   <p class="lead">What the latest release of ${outcomes.length} widely used npm and PyPI packages does at install and import time that the release before it did not. Observed on ${date} with <a href="${REPO}">pkgsnitch</a>.</p>
   <div class="counts">
-    <div><b>${count('clean')}</b><span>nothing new</span></div>
+    <div><b>${count('clean')}</b><span>nothing new or minor</span></div>
     <div><b>${count('new')}</b><span>new behavior</span></div>
     <div><b>${count('look')}</b><span>needs a look</span></div>
     <div><b>${count('unknown')}</b><span>incomplete</span></div>
