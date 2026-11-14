@@ -1,0 +1,8 @@
+{
+  "name": "lock-fixture",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "lock-fixture", "dependencies": { "left-pad": "^1.2.0" } },
+    "node_modules/left-pad": { "version": "1.2.0" }
+  }
+}

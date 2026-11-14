@@ -164,6 +164,21 @@ impl Sandbox {
         ])
         .with_context(|| format!("could not fetch {}", target.label()))?;
 
+        // Secure what the fetch recorded, and plant the honeytokens, before
+        // any package code runs: /probe is writable by root only.
+        self.run(&[
+            "exec",
+            "--user",
+            "root",
+            id,
+            "cp",
+            "/out/name",
+            "/out/lock.json",
+            "/out/manifest.json",
+            "/probe/",
+        ])?;
+        self.run(&["exec", "--user", "dev", id, "/opt/pkgsnitch/honey.sh"])?;
+
         // Cut the cable, then point DNS at the sinkhole.
         self.run(&["network", "disconnect", "bridge", id])
             .context("could not disconnect the sandbox network")?;
@@ -188,19 +203,19 @@ impl Sandbox {
         self.run(&["exec", id, "sh", "-c", "i=0; until [ -e /probe/ready ]; do i=$((i+1)); [ $i -gt 100 ] && exit 1; sleep 0.1; done"])
             .context("the network sinkhole did not start")?;
 
-        // Phases 1 and 2: run the code, watched.
+        // Phases 1 and 2: run the code, watched. The tracer is root; the code
+        // it starts is the unprivileged user.
         self.run(&[
             "exec",
             "--user",
-            "dev",
+            "root",
             id,
             "/opt/pkgsnitch/trace.sh",
             &timeout,
         ])?;
 
         let dir = tempfile::tempdir()?;
-        self.copy_out(id, "/out/.", dir.path())?;
-        self.copy_out(id, "/probe/net.jsonl", dir.path())?;
+        self.copy_out(id, "/probe/.", dir.path())?;
         Ok(RawRun { dir })
     }
 
@@ -282,10 +297,18 @@ impl<'a> Container<'a> {
                 &id,
                 "--label",
                 "pkgsnitch=1",
-                // The observed code gets no capabilities, cannot gain any,
-                // and is bounded in processes and memory.
+                // The observed code runs as an ordinary user: it holds no
+                // capabilities, cannot gain any, and is bounded in processes
+                // and memory. Root keeps only what the tracer needs to start
+                // that user's process and watch it.
                 "--cap-drop",
                 "ALL",
+                "--cap-add",
+                "SETUID",
+                "--cap-add",
+                "SETGID",
+                "--cap-add",
+                "SYS_PTRACE",
                 "--security-opt",
                 "no-new-privileges",
                 "--pids-limit",
