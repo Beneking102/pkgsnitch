@@ -50,7 +50,7 @@ enum Cmd {
         after_help = "Examples:\n  pkgsnitch diff left-pad 1.2.0 1.3.0\n  pkgsnitch diff pypi:requests 2.31.0 2.32.3\n  pkgsnitch diff ./pkg-1.0.0.tgz ./pkg-1.0.1.tgz"
     )]
     Diff {
-        /// `<package> <old-version> <new-version>`, or two `npm pack` tarballs
+        /// `<package> <old-version> <new-version>`, or two local archives
         #[arg(num_args = 2..=3, required = true, value_name = "PACKAGE OLD NEW | OLD.tgz NEW.tgz")]
         targets: Vec<String>,
         #[command(flatten)]
@@ -61,7 +61,7 @@ enum Cmd {
         after_help = "Examples:\n  pkgsnitch scan esbuild@0.21.5\n  pkgsnitch scan pypi:requests==2.32.3\n  pkgsnitch scan ./my-package-1.0.0.tgz"
     )]
     Scan {
-        /// `name`, `name@version` or a tarball
+        /// `name`, `name@version` or a local archive
         package: String,
         #[command(flatten)]
         opts: Options,
@@ -71,7 +71,7 @@ enum Cmd {
         after_help = "Reads package-lock.json, asks the registry for newer versions of your direct\ndependencies, runs the behavioral diff for each and prints a patch plan:\napply, review or hold.\n\nExamples:\n  pkgsnitch updates\n  pkgsnitch updates ./my-app --dev --format markdown"
     )]
     Updates {
-        /// Project directory containing package-lock.json
+        /// Project directory, or a package-lock.json or requirements.txt
         #[arg(default_value = ".")]
         dir: PathBuf,
         /// Include devDependencies
@@ -91,9 +91,9 @@ enum Cmd {
         after_help = "Example:\n  git show origin/main:package-lock.json > base.json\n  pkgsnitch lock base.json package-lock.json --format markdown"
     )]
     Lock {
-        /// package-lock.json before the change
+        /// package-lock.json or requirements.txt before the change
         old: PathBuf,
-        /// package-lock.json after the change
+        /// The same file after the change
         new: PathBuf,
         /// Evaluate at most this many changes (direct dependencies first)
         #[arg(long, default_value_t = 20)]
@@ -197,7 +197,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             max,
             opts,
         } => {
-            let lock = plan::read_lock(&dir.join("package-lock.json"))?;
+            let lock = plan::read_lock(&project_lock(&dir)?)?;
             let names: Vec<String> = lock
                 .direct(dev)
                 .map(|(name, _)| name.to_string())
@@ -208,7 +208,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     "  asking the registry about {} dependencies...",
                     names.len()
                 );
-                let available = session.sandbox.available_versions(&names)?;
+                let available = session.sandbox.available_versions(lock.ecosystem, &names)?;
                 let updates = plan::outdated(&lock, &available, level, dev);
                 evaluate(session, updates, max, true, &opts)
             })
@@ -320,7 +320,7 @@ impl Session<'_> {
         validate(&update.name, "package name")?;
         validate(&update.to, "version")?;
         let registry = |version: &str| Target::Registry {
-            ecosystem: Ecosystem::Npm,
+            ecosystem: update.ecosystem,
             name: update.name.clone(),
             version: Some(version.to_string()),
         };
@@ -330,7 +330,7 @@ impl Session<'_> {
                 self.compare(&registry(from), &registry(&update.to), Mode::Update)
             }
             None => self.compare(
-                &Target::Baseline(Ecosystem::Npm),
+                &Target::Baseline(update.ecosystem),
                 &registry(&update.to),
                 Mode::Scan,
             ),
@@ -370,7 +370,7 @@ impl Session<'_> {
 
 fn diff_targets(args: &[String]) -> Result<(Target, Target)> {
     match args {
-        [old, new] if is_tarball(old) && is_tarball(new) => Ok((tarball(old)?, tarball(new)?)),
+        [old, new] if is_archive(old) && is_archive(new) => Ok((archive(old)?, archive(new)?)),
         [package, old, new] => {
             let (ecosystem, name) = split_ecosystem(package);
             validate(name, "package name")?;
@@ -383,13 +383,13 @@ fn diff_targets(args: &[String]) -> Result<(Target, Target)> {
             };
             Ok((registry(old), registry(new)))
         }
-        _ => bail!("expected `<package> <old-version> <new-version>` or two .tgz files"),
+        _ => bail!("expected `<package> <old-version> <new-version>` or two archive files"),
     }
 }
 
 fn scan_target(arg: &str) -> Result<Target> {
-    if is_tarball(arg) {
-        return tarball(arg);
+    if is_archive(arg) {
+        return archive(arg);
     }
     let (ecosystem, spec) = split_ecosystem(arg);
     // pip writes `name==version`; accept that as well as `name@version`.
@@ -408,16 +408,48 @@ fn scan_target(arg: &str) -> Result<Target> {
     })
 }
 
-fn is_tarball(arg: &str) -> bool {
-    arg.ends_with(".tgz") || arg.ends_with(".tar.gz")
+/// A local package file rather than a registry name.
+fn is_archive(arg: &str) -> bool {
+    [".tgz", ".tar.gz", ".whl", ".zip"]
+        .iter()
+        .any(|ending| arg.ends_with(ending))
 }
 
-fn tarball(arg: &str) -> Result<Target> {
-    let path = Path::new(arg);
+/// `pkg.tgz` is an npm tarball and `pkg.whl` a Python wheel. A `.tar.gz`
+/// could be either, so a Python source distribution needs the `pypi:` prefix.
+fn archive(arg: &str) -> Result<Target> {
+    let (prefixed, file) = split_ecosystem(arg);
+    let ecosystem = if file.ends_with(".whl") {
+        Ecosystem::PyPI
+    } else {
+        prefixed
+    };
+    let path = Path::new(file);
     if !path.is_file() {
-        bail!("`{arg}` is not a file");
+        bail!("`{file}` is not a file");
     }
-    Ok(Target::Tarball(path.to_path_buf()))
+    Ok(Target::Archive {
+        ecosystem,
+        path: path.to_path_buf(),
+    })
+}
+
+/// The file `updates` reads: the one given, or the lockfile of the project
+/// directory, npm first.
+fn project_lock(dir: &Path) -> Result<PathBuf> {
+    if dir.is_file() {
+        return Ok(dir.to_path_buf());
+    }
+    ["package-lock.json", "requirements.txt"]
+        .iter()
+        .map(|name| dir.join(name))
+        .find(|path| path.is_file())
+        .with_context(|| {
+            format!(
+                "no package-lock.json or requirements.txt in `{}`",
+                dir.display()
+            )
+        })
 }
 
 /// Split an optional `pypi:` or `npm:` prefix off a package argument.

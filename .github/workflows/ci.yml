@@ -122,3 +122,40 @@ jobs:
           # pip cleaning up its own build directory must not look like the
           # package deleting files in the project.
           jq -e '[.findings[] | select(.title == "deletes file" or .title == "writes file")] | length == 0' sdist.json
+      - name: Pack the Python demo pair
+        run: |
+          for v in 1.0.0 1.0.1; do
+            tar -czf "pkgsnitch_demo_slugify-$v.tar.gz" -C demo/pypi --transform "s,^$v,pkgsnitch_demo_slugify-$v," "$v"
+          done
+      - name: The hijacked Python release must be flagged as critical
+        run: |
+          set +e
+          target/release/pkgsnitch diff --format json \
+            pypi:pkgsnitch_demo_slugify-1.0.0.tar.gz \
+            pypi:pkgsnitch_demo_slugify-1.0.1.tar.gz > hijack.json
+          status=$?
+          set -e
+          cat hijack.json
+          test "$status" -eq 1
+          jq -e '.verdict == "critical" and .package == "pkgsnitch-demo-slugify"' hijack.json
+          jq -e '.findings[] | select(.title == "reads file" and (.target | contains(".ssh/id_rsa")))' hijack.json
+          jq -e '.findings[] | select(.title == "exfiltrates secret" and (.target | startswith("HTTP request")))' hijack.json
+          jq -e '.findings[] | select(.title == "exfiltrates secret" and (.target | startswith("DNS lookup")))' hijack.json
+          jq -e '.findings[] | select(.title == "runs command" and (.target | startswith("curl ")))' hijack.json
+      - name: An unchanged Python release must be clean
+        run: |
+          target/release/pkgsnitch diff \
+            pypi:pkgsnitch_demo_slugify-1.0.0.tar.gz \
+            pypi:pkgsnitch_demo_slugify-1.0.0.tar.gz
+      - name: Patch plan and lockfile review for requirements.txt
+        run: |
+          mkdir pyproject && printf 'idna==3.6\n' > pyproject/requirements.txt
+          target/release/pkgsnitch updates pyproject --format json > pyupdates.json
+          cat pyupdates.json
+          jq -e '.outcomes[] | select(.name == "idna" and .ecosystem == "pypi" and .from == "3.6") | .advice == "apply"' pyupdates.json
+          target/release/pkgsnitch updates pyproject
+          printf 'idna==3.7\n' > newer.txt
+          target/release/pkgsnitch lock pyproject/requirements.txt newer.txt --format json > pylock.json
+          cat pylock.json
+          jq -e '.outcomes | length == 1' pylock.json
+          jq -e '.outcomes[0] | .name == "idna" and .to == "3.7" and .advice == "apply"' pylock.json

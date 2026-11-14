@@ -7,9 +7,11 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
+use serde::Serialize;
 use tempfile::TempDir;
 
 use crate::plan::Available;
@@ -22,13 +24,20 @@ const ASSETS: &[(&str, &str)] = &[
     ("honey.sh", include_str!("../sandbox/honey.sh")),
     ("pyfetch.py", include_str!("../sandbox/pyfetch.py")),
     ("pymodules.py", include_str!("../sandbox/pymodules.py")),
+    ("pyversions.py", include_str!("../sandbox/pyversions.py")),
 ];
 
-/// Where a copied-in tarball lives inside the sandbox.
+/// Where a copied-in npm tarball lives inside the sandbox.
 const TARBALL: &str = "/tmp/pkgsnitch-target.tgz";
+/// Where copied-in Python archives go: next to what pip downloads.
+const WHEELS: &str = "/work/wheels";
+
+/// Makes container names unique when several start in the same instant.
+static STARTED: AtomicU32 = AtomicU32::new(0);
 
 /// A package ecosystem pkgsnitch can observe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Npm,
     PyPI,
@@ -54,15 +63,16 @@ pub enum Target {
         name: String,
         version: Option<String>,
     },
-    /// A local `npm pack` tarball.
-    Tarball(PathBuf),
+    /// A local archive: an `npm pack` tarball, a wheel or a Python sdist.
+    Archive { ecosystem: Ecosystem, path: PathBuf },
 }
 
 impl Target {
     pub fn ecosystem(&self) -> Ecosystem {
         match self {
-            Target::Baseline(ecosystem) | Target::Registry { ecosystem, .. } => *ecosystem,
-            Target::Tarball(_) => Ecosystem::Npm,
+            Target::Baseline(ecosystem)
+            | Target::Registry { ecosystem, .. }
+            | Target::Archive { ecosystem, .. } => *ecosystem,
         }
     }
 
@@ -74,7 +84,7 @@ impl Target {
                 ..
             } => format!("pypi:{}", self.spec()),
             Target::Registry { .. } => self.spec(),
-            Target::Tarball(path) => path.display().to_string(),
+            Target::Archive { path, .. } => path.display().to_string(),
         }
     }
 
@@ -96,7 +106,7 @@ impl Target {
                 name,
                 version: Some(v),
             } => format!("{name}=={v}"),
-            Target::Baseline(_) | Target::Tarball(_) => String::new(),
+            Target::Baseline(_) | Target::Archive { .. } => String::new(),
         }
     }
 }
@@ -169,13 +179,21 @@ impl Sandbox {
         let ecosystem = target.ecosystem().id();
         let spec = match target {
             Target::Baseline(_) | Target::Registry { .. } => target.spec(),
-            Target::Tarball(path) => {
+            Target::Archive { ecosystem, path } => {
+                // An npm tarball can live anywhere. pip reads name and version
+                // from the file name, so a Python archive keeps its own.
+                let (inside, spec) = match ecosystem {
+                    Ecosystem::Npm => (TARBALL.to_string(), TARBALL.to_string()),
+                    Ecosystem::PyPI => {
+                        let file = archive_name(path)?;
+                        (format!("{WHEELS}/{file}"), format!("file:{file}"))
+                    }
+                };
                 // Streamed in as the sandbox user: `docker cp` would keep the
                 // host's file owner, which the capability-less container
                 // cannot change afterwards.
                 let file = File::open(path)
                     .with_context(|| format!("could not open `{}`", path.display()))?;
-                let write = format!("cat > {TARBALL}");
                 self.run_with(
                     &[
                         "exec",
@@ -185,12 +203,14 @@ impl Sandbox {
                         id,
                         "sh",
                         "-c",
-                        &write,
+                        r#"mkdir -p "$(dirname "$1")" && cat > "$1""#,
+                        "sh",
+                        &inside,
                     ],
                     Stdio::from(file),
                 )
                 .with_context(|| format!("could not copy `{}` into the sandbox", path.display()))?;
-                TARBALL.to_string()
+                spec
             }
         };
 
@@ -265,13 +285,19 @@ impl Sandbox {
 
     /// Ask the registry which versions of each package exist. Packages it
     /// does not know are left out of the result.
-    pub fn available_versions(&self, names: &[String]) -> Result<BTreeMap<String, Available>> {
+    pub fn available_versions(
+        &self,
+        ecosystem: Ecosystem,
+        names: &[String],
+    ) -> Result<BTreeMap<String, Available>> {
         if names.is_empty() {
             return Ok(BTreeMap::new());
         }
         // The lookup runs in the sandbox, so the host needs no npm of its own.
         // One line per package: its name, a tab, and npm's JSON on one line.
         const SCRIPT: &str = r#"for p in "$@"; do v=$(npm view --json -- "$p" dist-tags.latest versions 2>/dev/null | tr -d '\n') && printf '%s\t%s\n' "$p" "$v"; done"#;
+        // The same line format, written by a script that asks the index.
+        const PYPI_SCRIPT: &str = r#"exec python3 /opt/pkgsnitch/pyversions.py "$@""#;
         let container = Container::start(self)?;
         let mut args = vec![
             "exec",
@@ -280,7 +306,10 @@ impl Sandbox {
             container.id.as_str(),
             "sh",
             "-c",
-            SCRIPT,
+            match ecosystem {
+                Ecosystem::Npm => SCRIPT,
+                Ecosystem::PyPI => PYPI_SCRIPT,
+            },
             "sh",
         ];
         args.extend(names.iter().map(String::as_str));
@@ -322,6 +351,17 @@ impl Sandbox {
     }
 }
 
+/// The file name of a local archive, which ends up in a path inside the
+/// sandbox and must therefore be plain.
+fn archive_name(path: &Path) -> Result<&str> {
+    let name = path.file_name().and_then(|n| n.to_str()).filter(|n| {
+        !n.starts_with('.')
+            && n.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-+".contains(&b))
+    });
+    name.with_context(|| format!("`{}` has an unusual file name", path.display()))
+}
+
 /// A running sandbox container, removed on drop.
 struct Container<'a> {
     sandbox: &'a Sandbox,
@@ -333,7 +373,8 @@ impl<'a> Container<'a> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
-        let id = format!("pkgsnitch-{}-{nanos}", std::process::id());
+        let serial = STARTED.fetch_add(1, Ordering::Relaxed);
+        let id = format!("pkgsnitch-{}-{nanos}-{serial}", std::process::id());
         sandbox
             .run(&[
                 "run",

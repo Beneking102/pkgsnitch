@@ -89,6 +89,18 @@ def main():
         write("manifest.json", "{}")
         return
 
+    if spec.startswith("file:"):
+        # A local archive, already copied next to the downloads.
+        local = os.path.join(WHEELS, spec[len("file:"):])
+        wanted, version, local_sdist = next(entry for entry in downloaded())
+        name = wanted
+        # A wheel names its dependencies in plain metadata; a source
+        # distribution only reveals them by running, so it gets none.
+        with_deps = not local_sdist and download_wheels(local)
+        if local_sdist:
+            download_wheels("setuptools", "wheel")
+        return record(name, wanted, with_deps, install=local)
+
     name, _, version = spec.partition("==")
     wanted = normalize(name)
     with_deps = download_wheels(spec)
@@ -98,6 +110,11 @@ def main():
         download_sdist(name, version or None)
         download_wheels("setuptools", "wheel")
 
+    record(name, wanted, with_deps)
+
+
+def record(name, wanted, with_deps, install=None):
+    """Write down what was fetched, for the install phase and the report."""
     packages = {}
     target = None
     for dist, found_version, is_sdist in downloaded():
@@ -111,7 +128,7 @@ def main():
     found_version, is_sdist = target
     scripts = {"install": "source distribution: its build script runs on install"} if is_sdist else {}
     write("name", wanted)
-    write("pipspec", f"{name}=={found_version}")
+    write("pipspec", install or f"{name}=={found_version}")
     write("nodeps", "" if with_deps else "1")
     write("lock.json", json.dumps({"packages": packages}))
     write("manifest.json", json.dumps({"version": found_version, "scripts": scripts}))

@@ -13,10 +13,12 @@ use serde_json::Value;
 
 use crate::model::{Change, Report, Severity, SCHEMA};
 use crate::report::Format;
+use crate::sandbox::Ecosystem;
 
-/// The parts of a `package-lock.json` that matter here.
-#[derive(Debug, Default)]
+/// What a project pins: a `package-lock.json` or a `requirements.txt`.
+#[derive(Debug)]
 pub struct Lock {
+    pub ecosystem: Ecosystem,
     /// Every installed package with all versions present in the tree.
     packages: BTreeMap<String, BTreeSet<String>>,
     /// Version installed at the top level, i.e. what `require(name)` loads.
@@ -30,6 +32,10 @@ pub struct Lock {
 pub fn read_lock(path: &Path) -> Result<Lock> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    // A lockfile of npm is JSON; anything else is read as pip requirements.
+    if !text.trim_start().starts_with('{') {
+        return Ok(parse_requirements(&text));
+    }
     let json: Value =
         serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     parse_lock(&json).with_context(|| format!("{} is not a usable lockfile", path.display()))
@@ -40,7 +46,7 @@ fn parse_lock(json: &Value) -> Result<Lock> {
         .get("packages")
         .and_then(Value::as_object)
         .context("no `packages` section (lockfileVersion 2 or newer is required)")?;
-    let mut lock = Lock::default();
+    let mut lock = Lock::empty(Ecosystem::Npm);
     for (path, info) in packages {
         if path.is_empty() {
             for (section, is_dev) in [
@@ -85,7 +91,63 @@ fn parse_lock(json: &Value) -> Result<Lock> {
     Ok(lock)
 }
 
+/// Read pinned requirements (`name==1.2.3`), as `pip freeze` and pip-tools
+/// write them. Unpinned lines, options and URLs are skipped: without an
+/// exact version there is nothing to compare.
+fn parse_requirements(text: &str) -> Lock {
+    let mut lock = Lock::empty(Ecosystem::PyPI);
+    for line in text.lines() {
+        // Drop comments, environment markers and hash options.
+        let line = line.split(" #").next().unwrap_or("");
+        let line = line.split([';', ' ']).next().unwrap_or("").trim();
+        if line.starts_with(['#', '-']) {
+            continue;
+        }
+        let Some((name, version)) = line.split_once("==") else {
+            continue;
+        };
+        // `requests[socks]` installs the same distribution as `requests`.
+        let name = name.split('[').next().unwrap_or(name).trim();
+        if name.is_empty() || version.is_empty() || version.contains('*') {
+            continue;
+        }
+        let name = normalize_python(name);
+        lock.packages
+            .entry(name.clone())
+            .or_default()
+            .insert(version.to_string());
+        lock.top.insert(name.clone(), version.to_string());
+        lock.direct.insert(name);
+    }
+    lock
+}
+
+/// PyPI treats `Foo_Bar`, `foo-bar` and `foo.bar` as one name.
+fn normalize_python(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            if !out.ends_with('-') {
+                out.push('-');
+            }
+        } else {
+            out.push(c.to_ascii_lowercase());
+        }
+    }
+    out
+}
+
 impl Lock {
+    fn empty(ecosystem: Ecosystem) -> Self {
+        Self {
+            ecosystem,
+            packages: BTreeMap::new(),
+            top: BTreeMap::new(),
+            direct: BTreeSet::new(),
+            dev: BTreeSet::new(),
+        }
+    }
+
     /// Direct dependencies with the version currently installed.
     pub fn direct(&self, include_dev: bool) -> impl Iterator<Item = (&str, &str)> {
         self.direct
@@ -123,46 +185,64 @@ impl Bump {
     }
 }
 
-/// `major.minor.patch` plus the prerelease tag, build metadata dropped.
-fn semver(v: &str) -> Option<([u64; 3], &str)> {
+/// A version as its numeric release segments plus whatever follows them.
+///
+/// Covers npm (`1.2.3`, `1.2.3-beta.1+build`) and PEP 440 (`2.32`, `1.0rc1`,
+/// `2024.2.2`). A non-empty tail marks a prerelease or other special build.
+fn parse_version(v: &str) -> Option<(Vec<u64>, &str)> {
     let v = v.split('+').next()?;
-    let (core, pre) = v.split_once('-').unwrap_or((v, ""));
-    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let triple = [parts.next()??, parts.next()??, parts.next()??];
-    parts.next().is_none().then_some((triple, pre))
+    let end = v
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(v.len());
+    let (core, tail) = v.split_at(end);
+    let numbers: Option<Vec<u64>> = core
+        .trim_end_matches('.')
+        .split('.')
+        .map(|p| p.parse().ok())
+        .collect();
+    let numbers = numbers.filter(|n| !n.is_empty())?;
+    Some((numbers, tail.trim_start_matches(['-', '_', '.'])))
+}
+
+/// The `index`-th release segment; missing ones count as zero (1.0 = 1.0.0).
+fn segment(numbers: &[u64], index: usize) -> u64 {
+    numbers.get(index).copied().unwrap_or(0)
 }
 
 fn order(a: &str, b: &str) -> Ordering {
-    match (semver(a), semver(b)) {
-        (Some((x, xp)), Some((y, yp))) => {
-            x.cmp(&y)
-                .then_with(|| match (xp.is_empty(), yp.is_empty()) {
-                    // A release is newer than any of its prereleases.
-                    (true, false) => Ordering::Greater,
-                    (false, true) => Ordering::Less,
-                    _ => xp.cmp(yp),
-                })
-        }
+    match (parse_version(a), parse_version(b)) {
+        (Some((x, xp)), Some((y, yp))) => (0..x.len().max(y.len()))
+            .map(|i| segment(&x, i).cmp(&segment(&y, i)))
+            .find(|o| o.is_ne())
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| match (xp.is_empty(), yp.is_empty()) {
+                // A release is newer than any of its prereleases.
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                _ => xp.cmp(yp),
+            }),
         _ => a.cmp(b),
     }
 }
 
 fn bump(from: &str, to: &str) -> Bump {
-    let (Some((a, _)), Some((b, _))) = (semver(from), semver(to)) else {
+    let (Some((a, _)), Some((b, _))) = (parse_version(from), parse_version(to)) else {
         return Bump::Other;
     };
-    match order(from, to) {
-        Ordering::Greater => Bump::Downgrade,
-        _ if a[0] != b[0] => Bump::Major,
-        _ if a[1] != b[1] => Bump::Minor,
-        _ if a[2] != b[2] => Bump::Patch,
-        _ => Bump::Prerelease,
+    if order(from, to) == Ordering::Greater {
+        return Bump::Downgrade;
+    }
+    match (0..a.len().max(b.len())).find(|i| segment(&a, *i) != segment(&b, *i)) {
+        Some(0) => Bump::Major,
+        Some(1) => Bump::Minor,
+        Some(_) => Bump::Patch,
+        None => Bump::Prerelease,
     }
 }
 
-/// One version change to evaluate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Update {
+    pub ecosystem: Ecosystem,
     pub name: String,
     /// `None` when the package is new to the tree.
     pub from: Option<String>,
@@ -175,12 +255,18 @@ pub struct Update {
 impl Update {
     fn new(name: &str, from: Option<&str>, to: &str, direct: bool) -> Self {
         Self {
+            ecosystem: Ecosystem::Npm,
             name: name.to_string(),
             from: from.map(str::to_string),
             to: to.to_string(),
             bump: from.map_or(Bump::Added, |f| bump(f, to)),
             direct,
         }
+    }
+
+    fn of(mut self, ecosystem: Ecosystem) -> Self {
+        self.ecosystem = ecosystem;
+        self
     }
 }
 
@@ -195,12 +281,13 @@ pub fn changes(old: &Lock, new: &Lock) -> Vec<Update> {
             if before.is_some_and(|set| set.contains(version)) {
                 continue;
             }
-            out.push(Update::new(
+            let update = Update::new(
                 name,
                 previous.map(String::as_str),
                 version,
                 new.direct.contains(name),
-            ));
+            );
+            out.push(update.of(new.ecosystem));
         }
     }
     out.sort_by(|a, b| b.direct.cmp(&a.direct).then_with(|| a.name.cmp(&b.name)));
@@ -236,20 +323,22 @@ impl Available {
     /// The newest stable version above `installed` that stays within
     /// `level` and does not go past what the maintainers call latest.
     fn pick(&self, installed: &str, level: Level) -> Option<&str> {
-        let (current, _) = semver(installed)?;
+        let (current, _) = parse_version(installed)?;
         self.versions
             .iter()
             .map(String::as_str)
             .filter(|v| {
-                let Some((candidate, pre)) = semver(v) else {
+                let Some((candidate, pre)) = parse_version(v) else {
                     return false;
                 };
                 pre.is_empty()
                     && order(installed, v) == Ordering::Less
                     && order(v, &self.latest) != Ordering::Greater
                     && match level {
-                        Level::Patch => candidate[..2] == current[..2],
-                        Level::Minor => candidate[0] == current[0],
+                        Level::Patch => {
+                            (0..2).all(|i| segment(&candidate, i) == segment(&current, i))
+                        }
+                        Level::Minor => segment(&candidate, 0) == segment(&current, 0),
                         Level::Major => true,
                     }
             })
@@ -278,7 +367,7 @@ pub fn outdated(
     lock.direct(include_dev)
         .filter_map(|(name, installed)| {
             let newer = available.get(name)?.pick(installed, level)?;
-            Some(Update::new(name, Some(installed), newer, true))
+            Some(Update::new(name, Some(installed), newer, true).of(lock.ecosystem))
         })
         .collect()
 }
@@ -416,10 +505,17 @@ impl Plan {
             .outcomes
             .iter()
             .filter(|o| o.advice == Advice::Apply && o.update.direct)
-            .map(|o| format!("{}@{}", o.update.name, o.update.to))
+            .map(|o| match o.update.ecosystem {
+                Ecosystem::Npm => format!("{}@{}", o.update.name, o.update.to),
+                Ecosystem::PyPI => format!("{}=={}", o.update.name, o.update.to),
+            })
             .collect();
+        let installer = match self.outcomes.first()?.update.ecosystem {
+            Ecosystem::Npm => "npm install",
+            Ecosystem::PyPI => "pip install",
+        };
         (self.suggest_command && !safe.is_empty())
-            .then(|| format!("npm install {}", safe.join(" ")))
+            .then(|| format!("{installer} {}", safe.join(" ")))
     }
 
     fn summary(&self) -> String {
@@ -714,6 +810,72 @@ mod tests {
         assert_eq!(single.versions, ["0.0.1"]);
         assert!(Available::parse("").is_none());
         assert!(Available::parse("{}").is_none());
+    }
+
+    #[test]
+    fn compares_python_versions_too() {
+        assert_eq!(order("2.9", "2.10"), Ordering::Less);
+        assert_eq!(order("1.0", "1.0.0"), Ordering::Equal);
+        assert_eq!(order("1.0rc1", "1.0"), Ordering::Less);
+        assert_eq!(order("2024.2.2", "2024.12.14"), Ordering::Less);
+        assert_eq!(bump("3.6", "3.7"), Bump::Minor);
+        assert_eq!(bump("2.31.0", "2.32.3"), Bump::Minor);
+        assert_eq!(bump("2.32.2", "2.32.3"), Bump::Patch);
+        assert_eq!(bump("1.26.18", "2.2.1"), Bump::Major);
+        assert_eq!(bump("1.0rc1", "1.0"), Bump::Prerelease);
+
+        let offer = Available {
+            latest: "3.7".into(),
+            versions: ["3.4", "3.6", "3.6.1", "3.7", "4.0rc1"]
+                .map(String::from)
+                .to_vec(),
+        };
+        assert_eq!(offer.pick("3.6", Level::Major), Some("3.7"));
+        assert_eq!(offer.pick("3.6", Level::Patch), Some("3.6.1"));
+        assert_eq!(offer.pick("3.7", Level::Major), None);
+    }
+
+    #[test]
+    fn reads_pinned_requirements() {
+        let lock = parse_requirements(
+            "# frozen\nrequests==2.31.0\nCharset_Normalizer==3.3.2 ; python_version >= '3.7'\n\
+             urllib3[socks]==2.0.7  # via requests\nidna==3.6 --hash=sha256:abc\n\
+             -r other.txt\n--index-url https://example.invalid\nflask>=2.0\nnumpy==1.*\n",
+        );
+        assert_eq!(lock.ecosystem, Ecosystem::PyPI);
+        let pinned: Vec<_> = lock.direct(false).collect();
+        assert_eq!(
+            pinned,
+            [
+                ("charset-normalizer", "3.3.2"),
+                ("idna", "3.6"),
+                ("requests", "2.31.0"),
+                ("urllib3", "2.0.7")
+            ]
+        );
+
+        let newer = parse_requirements("requests==2.32.3\nidna==3.6\ncertifi==2024.2.2\n");
+        let found = changes(&lock, &newer);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|u| u.ecosystem == Ecosystem::PyPI));
+        assert_eq!(
+            (found[0].name.as_str(), found[0].from.as_deref()),
+            ("certifi", None)
+        );
+        assert_eq!(
+            (found[1].name.as_str(), found[1].bump),
+            ("requests", Bump::Minor)
+        );
+
+        let plan = Plan::new(
+            vec![Outcome::new(found[1].clone(), Ok(report(Severity::Info)))],
+            0,
+            true,
+        );
+        assert_eq!(
+            plan.apply_command().as_deref(),
+            Some("pip install requests==2.32.3")
+        );
     }
 
     #[test]

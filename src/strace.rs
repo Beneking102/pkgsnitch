@@ -323,6 +323,47 @@ mod tests {
         assert_eq!(dirfd_before(r#""abs""#, 0), None);
     }
 
+    /// Traces come from hostile code. Whatever a line holds, the parser and
+    /// the helpers built on it must return, not panic.
+    #[test]
+    fn survives_malformed_lines() {
+        let nasty = [
+            "",
+            "   ",
+            "notapid openat() = 0",
+            "1",
+            "1  (",
+            "1  ) = ",
+            "1  openat(",
+            "1  openat( = 3",
+            "1  openat) = 3(",
+            r#"1  openat(AT_FDCWD, "unterminated, O_RDONLY) = 3"#,
+            r#"1  execve("\", ["\\\"", "\x", "\xZZ", "\9", "\"], 0x0) = 0"#,
+            "1  <... resumed>) = 0",
+            "1  <... openat resumed>",
+            "1  connect(3, {sa_family=AF_INET, sin_port=htons(, sin_addr=inet_addr(\"}, 16) = 0",
+            "1  connect(3, {sa_family=AF_UNIX, sun_path=}, 110) = 0",
+            "1  connect(3, {sa_family=AF_INET6, inet_pton(AF_INET6, \"::1\"}, 28) = 0",
+            "1  openat(AT_FDCWD</tmp/ä→ö>, \"ünïcödé/\u{1F600}\", O_RDONLY) = 3</x>",
+            "4294967295  openat(AT_FDCWD, \"x\", O_RDONLY) = -1",
+            "1  openat(AT_FDCWD, \"x\", O_RDONLY) = 0x",
+            "1  = = = = (((( ))))",
+        ];
+        let mut parser = Parser::default();
+        for line in nasty {
+            if let Some(call) = parser.feed(line) {
+                for tok in strings(&call.args) {
+                    let _ = dirfd_before(&call.args, tok.start);
+                }
+                let _ = without_strings(&call.args);
+                let _ = sockaddr(&call.args);
+            }
+            let _ = strings(line);
+            let _ = without_strings(line);
+            let _ = sockaddr(line);
+        }
+    }
+
     #[test]
     fn parses_socket_addresses() {
         let v4 = r#"3<socket:[1]>, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("93.184.216.34")}, 16"#;
