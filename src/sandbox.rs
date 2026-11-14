@@ -439,3 +439,56 @@ fn assets_hash() -> u64 {
     }
     h
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_sandbox_file_is_copied_into_the_image() {
+        let dockerfile = ASSETS[0].1;
+        for (name, _) in &ASSETS[1..] {
+            let copied = dockerfile
+                .lines()
+                .filter(|line| line.starts_with("COPY"))
+                .any(|line| line.split_whitespace().any(|word| word == *name));
+            assert!(
+                copied,
+                "{name} is embedded but the Dockerfile does not COPY it"
+            );
+        }
+    }
+
+    #[test]
+    fn archive_names_must_be_plain() {
+        let name = |path: &str| archive_name(Path::new(path)).ok().map(str::to_string);
+        assert_eq!(
+            name("dist/pkg-1.0-py3-none-any.whl").as_deref(),
+            Some("pkg-1.0-py3-none-any.whl")
+        );
+        assert_eq!(
+            name("pkg_x-1.0+local.tar.gz").as_deref(),
+            Some("pkg_x-1.0+local.tar.gz")
+        );
+        assert_eq!(name("has space.whl"), None);
+        assert_eq!(name("a;b.whl"), None);
+        assert_eq!(name(".hidden.whl"), None);
+    }
+
+    #[test]
+    fn targets_describe_themselves_per_ecosystem() {
+        let registry = |ecosystem, version: Option<&str>| Target::Registry {
+            ecosystem,
+            name: "pkg".into(),
+            version: version.map(str::to_string),
+        };
+        assert_eq!(registry(Ecosystem::Npm, Some("1.0.0")).spec(), "pkg@1.0.0");
+        assert_eq!(registry(Ecosystem::PyPI, Some("1.0")).spec(), "pkg==1.0");
+        assert_eq!(
+            registry(Ecosystem::PyPI, Some("1.0")).label(),
+            "pypi:pkg==1.0"
+        );
+        assert_eq!(registry(Ecosystem::PyPI, None).spec(), "pkg");
+        assert_eq!(Target::Baseline(Ecosystem::PyPI).ecosystem().id(), "pypi");
+    }
+}

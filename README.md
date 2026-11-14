@@ -16,9 +16,9 @@ A source diff shows what changed in the code. pkgsnitch shows what changed in th
 | See what a package does at all | `pkgsnitch scan <package>[@version]` |
 | Keep a project patched | `pkgsnitch updates [dir]` |
 | Review a dependency pull request | `pkgsnitch lock <old-lock> <new-lock>` |
-| Check your own release before publishing | `pkgsnitch diff old.tgz new.tgz` |
+| Check your own release before publishing | `pkgsnitch diff old.tgz new.tgz` (also `.whl`, or `pypi:x.tar.gz`) |
 
-For Python, prefix the package with `pypi:`, as in `pkgsnitch diff pypi:requests 2.31.0 2.32.3`.
+For Python, prefix the package with `pypi:`, as in `pkgsnitch diff pypi:requests 2.31.0 2.32.3`. `updates` and `lock` read a `requirements.txt` the same way as a `package-lock.json`.
 
 ## Install
 
@@ -112,9 +112,9 @@ On 30 real updates of widely used packages (lodash, express, typescript, next, v
 - **It observes, it does not prove.** Code that waits for a date, checks for CI, or triggers only on a specific call stays quiet in a short run. A clean report means "nothing new was observed", not "safe".
 - **Only install and import are exercised.** With the network cut, an install script that downloads a binary fails there: the attempt is reported, what the binary would do is not.
 - **Sandbox detection is possible**, and a container is not a hard boundary against kernel exploits. Run pkgsnitch where that is acceptable, such as a CI runner.
-- **PyPI is newer than npm here.** `diff` and `scan` work for both; `updates`, `lock` and local archives are npm only. A Python package without a wheel is installed without its dependencies.
+- **Python specifics.** Only pinned lines (`name==1.2.3`) of a `requirements.txt` are read. A package without a wheel is installed without its dependencies, so its import may fail.
 
-To try it without Docker, replay the recorded demo: `cargo run -- compare-dirs tests/fixtures/demo-old tests/fixtures/demo-new`. The demo package in `demo/` is harmless by construction. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+To try it without Docker, replay the recorded demo: `cargo run -- compare-dirs tests/fixtures/demo-old tests/fixtures/demo-new`. The demo packages in `demo/` (npm) and `demo/pypi/` (a Python source distribution) are harmless by construction. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 
