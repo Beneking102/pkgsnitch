@@ -19,7 +19,7 @@ inputs:
     description: Evaluate at most this many changed packages.
     default: "20"
   comment:
-    description: Post the report as a pull request comment, updated in place on later runs. Needs `pull-requests: write`.
+    description: "Post the report as a pull request comment, updated in place on later runs. Needs the pull-requests write permission."
     default: "true"
   token:
     description: Token used to comment.
