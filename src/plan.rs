@@ -139,6 +139,15 @@ impl Lock {
         lock
     }
 
+    /// Every pinned package as name and version, one entry per version.
+    pub fn pins(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.packages.iter().flat_map(|(name, versions)| {
+            versions
+                .iter()
+                .map(move |version| (name.as_str(), version.as_str()))
+        })
+    }
+
     /// Whether the file names the project's own dependencies.
     pub fn knows_direct(&self) -> bool {
         !self.direct.is_empty()

@@ -67,12 +67,8 @@ fn yarn(text: &str) -> Vec<Pin> {
                 .trim_end()
                 .trim_end_matches(':')
                 .split(',')
-                .filter_map(|request| {
-                    let request = request.trim().trim_matches('"');
-                    // The name ends at the last `@` that is not the scope's.
-                    let at = request.get(1..)?.find('@')? + 1;
-                    Some(request[..at].to_string())
-                })
+                .filter_map(|request| yarn_name(request.trim().trim_matches('"')))
+                .map(str::to_string)
                 .collect();
             names.dedup();
         } else if let Some(rest) = line.trim().strip_prefix("version") {
@@ -84,6 +80,18 @@ fn yarn(text: &str) -> Vec<Pin> {
         }
     }
     pins
+}
+
+/// The package a yarn request installs. The name ends at the first `@` that
+/// is not the scope's. An alias (`eslint-v7@npm:eslint@^7.7.0`) is installed
+/// under one name but *is* another package, and that one is what counts.
+fn yarn_name(request: &str) -> Option<&str> {
+    let at = request.get(1..)?.find('@')? + 1;
+    let (name, range) = (&request[..at], &request[at + 1..]);
+    let aliased = range
+        .strip_prefix("npm:")
+        .and_then(|real| Some(&real[..real.get(1..)?.rfind('@')? + 1]));
+    Some(aliased.unwrap_or(name))
 }
 
 /// `pnpm-lock.yaml`: the keys of the `packages:` section, written as
@@ -166,6 +174,33 @@ mod tests {
     fn reads_yarn_berry() {
         let text = "__metadata:\n  version: 8\n  cacheKey: 10c0\n\n\"left-pad@npm:^1.3.0\":\n  version: 1.3.0\n  resolution: \"left-pad@npm:1.3.0\"\n  checksum: abc\n  languageName: node\n  linkType: hard\n\n\"my-app@workspace:.\":\n  version: 0.0.0-use.local\n  resolution: \"my-app@workspace:.\"\n";
         assert_eq!(pins(text).1, [pair("left-pad", "1.3.0")]);
+    }
+
+    #[test]
+    fn yarn_aliases_resolve_to_the_real_package() {
+        assert_eq!(yarn_name("left-pad@^1.2.0"), Some("left-pad"));
+        assert_eq!(yarn_name("@babel/core@^7.0.0"), Some("@babel/core"));
+        assert_eq!(yarn_name("left-pad@npm:^1.3.0"), Some("left-pad"));
+        assert_eq!(yarn_name("eslint-v7@npm:eslint@^7.7.0"), Some("eslint"));
+        assert_eq!(
+            yarn_name("@typescript-eslint/parser-v2@npm:@typescript-eslint/parser@^2.26.0"),
+            Some("@typescript-eslint/parser")
+        );
+        assert_eq!(
+            yarn_name("esbuild@npm:esbuild-wasm@^0.23.0"),
+            Some("esbuild-wasm")
+        );
+        assert_eq!(
+            yarn_name("typescript@patch:typescript@npm%3A^5.5.2#builtin"),
+            Some("typescript")
+        );
+        assert_eq!(yarn_name("__metadata"), None);
+
+        let classic = "# yarn lockfile v1\n\n\n\"eslint-v7@npm:eslint@^7.7.0\":\n  version \"7.32.0\"\n\neslint@^8.57.1:\n  version \"8.57.1\"\n";
+        assert_eq!(
+            pins(classic).1,
+            [pair("eslint", "7.32.0"), pair("eslint", "8.57.1")]
+        );
     }
 
     #[test]

@@ -105,6 +105,9 @@ enum Cmd {
     /// Analyze the raw output directory of a sandbox run (for debugging)
     #[command(hide = true)]
     Analyze { dir: PathBuf },
+    /// Print what pkgsnitch reads from a lockfile (for debugging)
+    #[command(hide = true)]
+    InspectLock { file: PathBuf },
     /// Compare two raw output directories instead of running the sandbox.
     /// Used by the test harness to exercise the full pipeline without Docker.
     #[command(hide = true)]
@@ -153,6 +156,15 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
+        Cmd::InspectLock { file } => {
+            let lock = plan::read_lock(&file)?;
+            let pins: Vec<_> = lock.pins().collect();
+            println!("{} {}", lock.ecosystem.id(), pins.len());
+            for (name, version) in pins {
+                println!("{name} {version}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Analyze { dir } => {
             println!("{}", serde_json::to_string_pretty(&profile::build(&dir)?)?);
             Ok(ExitCode::SUCCESS)
