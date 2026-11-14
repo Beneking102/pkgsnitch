@@ -43,7 +43,8 @@ The traces are reduced to behaviors (sensitive files read, unexpected writes, pr
 ## Patch management
 
 ```
-pkgsnitch updates            # in a directory with package-lock.json
+pkgsnitch updates                  # in a directory with package-lock.json
+pkgsnitch updates --level patch    # bug-fix releases only
 ```
 
 Finds newer versions of your direct dependencies, runs the behavioral diff for each, and prints a plan:
@@ -76,7 +77,8 @@ jobs:
 | `--format terminal\|json\|markdown` | For people, tools, or a pull request |
 | `--fail-on <severity>` | Exit 1 at this severity or above (default `high`) |
 | `--allow <file>` | Accepted behaviors (default `.pkgsnitch-allow` if present) |
-| `--max <n>` | `updates` and `lock`: evaluate at most this many (default 20) |
+| `--level patch\|minor\|major` | `updates`: largest version jump to propose (default `major`) |
+| `--max <n>`, `--jobs <n>` | `updates` and `lock`: how many to evaluate (default 20), how many at once (default 2) |
 | `--timeout <seconds>` | Limit per phase (default 180) |
 | `--no-cache` | Do not reuse stored results for exact versions |
 
