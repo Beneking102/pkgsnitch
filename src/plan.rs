@@ -33,17 +33,31 @@ pub struct Lock {
 pub fn read_lock(path: &Path) -> Result<Lock> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    lock_from_text(&text, &path.display().to_string())
+}
+
+/// Parse a lockfile of any supported format; `label` names it in errors.
+pub fn lock_from_text(text: &str, label: &str) -> Result<Lock> {
     // yarn, pnpm and the Python TOML locks are recognized by their content.
-    if let Some((ecosystem, pins)) = lockfile::pinned(&text) {
+    if let Some((ecosystem, pins)) = lockfile::pinned(text) {
         return Ok(Lock::from_pins(ecosystem, pins));
     }
     // npm's lockfile is JSON; anything else is read as pip requirements.
     if !text.trim_start().starts_with('{') {
-        return Ok(parse_requirements(&text));
+        return Ok(parse_requirements(text));
     }
-    let json: Value =
-        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    parse_lock(&json).with_context(|| format!("{} is not a usable lockfile", path.display()))
+    let json: Value = serde_json::from_str(text).with_context(|| format!("parsing {label}"))?;
+    parse_lock(&json).with_context(|| format!("{label} is not a usable lockfile"))
+}
+
+/// The line of a lockfile on which a package version is pinned, so that
+/// tools can point at it. Name and version may sit on neighboring lines.
+fn line_of(text: &str, name: &str, version: &str) -> Option<usize> {
+    let lines: Vec<&str> = text.lines().collect();
+    (0..lines.len()).find_map(|i| {
+        let near = &lines[i..lines.len().min(i + 4)];
+        (lines[i].contains(name) && near.iter().any(|line| line.contains(version))).then_some(i + 1)
+    })
 }
 
 fn parse_lock(json: &Value) -> Result<Lock> {
@@ -137,6 +151,12 @@ impl Lock {
             lock.packages.entry(name).or_default().insert(version);
         }
         lock
+    }
+
+    /// The same kind of lockfile with nothing in it: what a file that did
+    /// not exist yet is compared as.
+    pub fn emptied(&self) -> Self {
+        Self::empty(self.ecosystem)
     }
 
     /// Every pinned package as name and version, one entry per version.
@@ -265,6 +285,11 @@ pub struct Update {
     pub bump: Bump,
     /// Whether the project depends on it directly.
     pub direct: bool,
+    /// The lockfile that pins it, and the line, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
 }
 
 impl Update {
@@ -276,7 +301,20 @@ impl Update {
             to: to.to_string(),
             bump: from.map_or(Bump::Added, |f| bump(f, to)),
             direct,
+            source: None,
+            line: None,
         }
+    }
+
+    /// Remember where the new version is pinned.
+    pub fn located(mut self, file: &Path, text: &str) -> Self {
+        // A proposed update is not in the file yet; point at what it replaces.
+        self.line = line_of(text, &self.name, &self.to).or_else(|| {
+            let from = self.from.as_deref()?;
+            line_of(text, &self.name, from)
+        });
+        self.source = Some(file.to_string_lossy().replace('\\', "/"));
+        self
     }
 
     fn of(mut self, ecosystem: Ecosystem) -> Self {
@@ -564,10 +602,11 @@ pub fn render(plan: &Plan, format: Format) -> String {
         Format::Terminal => terminal(plan),
         Format::Json => serde_json::to_string_pretty(plan).expect("plan is serializable") + "\n",
         Format::Markdown => markdown(plan),
+        Format::Sarif => crate::sarif::render(plan),
     }
 }
 
-fn versions(u: &Update) -> String {
+pub(crate) fn versions(u: &Update) -> String {
     match &u.from {
         Some(from) => format!("{from} -> {}", u.to),
         None => format!("(new) {}", u.to),

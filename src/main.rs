@@ -14,6 +14,7 @@ mod profile;
 mod report;
 mod rules;
 mod sandbox;
+mod sarif;
 mod strace;
 
 use std::path::{Path, PathBuf};
@@ -89,13 +90,15 @@ enum Cmd {
     },
     /// Review every change between two lockfiles, e.g. in a dependency pull request
     #[command(
-        after_help = "Example:\n  git show origin/main:package-lock.json > base.json\n  pkgsnitch lock base.json package-lock.json --format markdown"
+        after_help = "Examples:\n  pkgsnitch lock --since origin/main            every lockfile here, against a git ref\n  pkgsnitch lock --since HEAD yarn.lock         what is about to be committed\n  pkgsnitch lock old-lock.json package-lock.json"
     )]
     Lock {
-        /// package-lock.json or requirements.txt before the change
-        old: PathBuf,
-        /// The same file after the change
-        new: PathBuf,
+        /// Two lockfiles (before, after); with --since, the lockfiles to
+        /// check [default: every known lockfile in this directory]
+        files: Vec<PathBuf>,
+        /// Compare against the lockfile as it was at this git ref
+        #[arg(long, value_name = "GIT-REF")]
+        since: Option<String>,
         /// Evaluate at most this many changes (direct dependencies first)
         #[arg(long, default_value_t = 20)]
         max: usize,
@@ -190,12 +193,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
             &opts,
         ),
         Cmd::Lock {
-            old,
-            new,
+            files,
+            since,
             max,
             opts,
         } => {
-            let updates = plan::changes(&plan::read_lock(&old)?, &plan::read_lock(&new)?);
+            let updates = match (&since, files.as_slice()) {
+                (Some(reference), _) => changes_since(Path::new("."), reference, &files)?,
+                (None, [old, new]) => {
+                    let text = std::fs::read_to_string(new)
+                        .with_context(|| format!("reading {}", new.display()))?;
+                    let after = plan::lock_from_text(&text, &new.display().to_string())?;
+                    plan::changes(&plan::read_lock(old)?, &after)
+                        .into_iter()
+                        .map(|update| update.located(new, &text))
+                        .collect()
+                }
+                (None, _) => bail!("expected two lockfiles, or `--since <git-ref>`"),
+            };
             if updates.is_empty() {
                 return Ok(print_plan(Plan::new(Vec::new(), 0, false), &opts));
             }
@@ -211,7 +226,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             opts,
         } => {
             let file = project_lock(&dir)?;
-            let lock = plan::read_lock(&file)?;
+            let text = std::fs::read_to_string(&file)
+                .with_context(|| format!("reading {}", file.display()))?;
+            let lock = plan::lock_from_text(&text, &file.display().to_string())?;
             if !lock.knows_direct() {
                 bail!(
                     "`{}` does not say which packages the project depends on directly; \
@@ -231,7 +248,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     names.len()
                 );
                 let available = session.sandbox.available_versions(lock.ecosystem, &names)?;
-                let updates = plan::outdated(&lock, &available, level, dev);
+                let updates = plan::outdated(&lock, &available, level, dev)
+                    .into_iter()
+                    .map(|update| update.located(&file, &text))
+                    .collect();
                 evaluate(session, updates, max, true, &opts)
             })
         }
@@ -259,6 +279,9 @@ fn with_session<T>(opts: &Options, work: impl FnOnce(&Session) -> Result<T>) -> 
 
 /// `diff` and `scan`: one comparison, printed in full.
 fn single(old: &Target, new: &Target, mode: Mode, opts: &Options) -> Result<ExitCode> {
+    if opts.format == Format::Sarif {
+        bail!("the sarif format points at lockfile lines, so it is for `lock` and `updates`");
+    }
     let allow = Allowlist::load(opts.allow.as_deref())?;
     let mut report = with_session(opts, |session| session.compare(old, new, mode))?;
     allow.apply(&mut report);
@@ -456,6 +479,77 @@ fn archive(arg: &str) -> Result<Target> {
     })
 }
 
+/// Lockfiles looked for when `--since` is given no file.
+const LOCKFILES: [&str; 7] = [
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "requirements.txt",
+    "poetry.lock",
+    "uv.lock",
+];
+
+/// Everything the lockfiles in `dir` pin now that they did not pin at the
+/// git ref `reference`. A lockfile that did not exist then is all new.
+fn changes_since(dir: &Path, reference: &str, files: &[PathBuf]) -> Result<Vec<Update>> {
+    // The ref becomes a git argument; it must not be mistaken for an option.
+    if reference.is_empty() || reference.starts_with('-') || reference.contains(':') {
+        bail!("`{reference}` is not a usable git ref");
+    }
+    let verify = format!("{reference}^{{commit}}");
+    let known = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "--verify", "--quiet", &verify])
+        .output()
+        .context("could not run git")?;
+    if !known.status.success() {
+        bail!(
+            "git does not know `{reference}` here (is this a repository, and is the ref fetched?)"
+        );
+    }
+
+    let files: Vec<PathBuf> = if files.is_empty() {
+        LOCKFILES
+            .iter()
+            .map(PathBuf::from)
+            .filter(|file| dir.join(file).is_file())
+            .collect()
+    } else {
+        files.to_vec()
+    };
+    if files.is_empty() {
+        bail!("no lockfile found in this directory; name the file to check");
+    }
+
+    let mut updates = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(dir.join(&file))
+            .with_context(|| format!("reading {}", file.display()))?;
+        let label = file.display().to_string();
+        let now = plan::lock_from_text(&text, &label)?;
+        // `./` makes git resolve the path from this directory, not the root.
+        let path = label.replace('\\', "/");
+        let spec = format!("{reference}:./{}", path.trim_start_matches("./"));
+        let shown = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["show", &spec])
+            .output()
+            .context("could not run git")?;
+        let before = if shown.status.success() {
+            plan::lock_from_text(&String::from_utf8_lossy(&shown.stdout), &spec)?
+        } else {
+            now.emptied()
+        };
+        updates.extend(
+            plan::changes(&before, &now)
+                .into_iter()
+                .map(|update| update.located(&file, &text)),
+        );
+    }
+    Ok(updates)
+}
+
 /// The file `updates` reads: the one given, or the lockfile of the project
 /// directory, npm first.
 fn project_lock(dir: &Path) -> Result<PathBuf> {
@@ -561,6 +655,84 @@ mod tests {
         assert!(validate("a; rm -rf /", "package name").is_err());
         assert!(validate("$(id)", "version").is_err());
         assert!(validate("", "version").is_err());
+    }
+
+    #[test]
+    fn finds_what_changed_since_a_git_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(dir.path())
+                .args([
+                    "-c",
+                    "user.name=test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                ])
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "init.defaultBranch=main",
+                ])
+                .args(args)
+                .output()
+                .expect("git should be installed");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+
+        git(&["init", "--quiet"]);
+        write("requirements.txt", "idna==3.6\nrequests==2.31.0\n");
+        git(&["add", "."]);
+        git(&["commit", "--quiet", "-m", "pins"]);
+
+        // Nothing changed yet.
+        assert!(changes_since(dir.path(), "HEAD", &[]).unwrap().is_empty());
+
+        // One pin moves, and a lockfile git has never seen appears.
+        write("requirements.txt", "idna==3.6\nrequests==2.32.3\n");
+        write(
+            "yarn.lock",
+            "# yarn lockfile v1\n\n\nleft-pad@^1.3.0:\n  version \"1.3.0\"\n",
+        );
+        let found = changes_since(dir.path(), "HEAD", &[]).unwrap();
+        let summary: Vec<_> = found
+            .iter()
+            .map(|u| {
+                (
+                    u.name.as_str(),
+                    u.from.as_deref(),
+                    u.to.as_str(),
+                    u.source.as_deref(),
+                    u.line,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("left-pad", None, "1.3.0", Some("yarn.lock"), Some(4)),
+                (
+                    "requests",
+                    Some("2.31.0"),
+                    "2.32.3",
+                    Some("requirements.txt"),
+                    Some(2)
+                ),
+            ]
+        );
+
+        // Naming a file limits the check to it.
+        let only = changes_since(dir.path(), "HEAD", &[PathBuf::from("requirements.txt")]).unwrap();
+        assert_eq!(only.len(), 1);
+
+        assert!(changes_since(dir.path(), "no-such-ref", &[]).is_err());
+        assert!(changes_since(dir.path(), "--output=x", &[]).is_err());
     }
 
     #[test]

@@ -12,6 +12,8 @@ pub enum Format {
     Terminal,
     Json,
     Markdown,
+    /// For code scanning tools; `lock` and `updates` only
+    Sarif,
 }
 
 pub fn render(report: &Report, format: Format) -> String {
@@ -21,6 +23,9 @@ pub fn render(report: &Report, format: Format) -> String {
             serde_json::to_string_pretty(report).expect("report is serializable") + "\n"
         }
         Format::Markdown => markdown(report),
+        // A single report has no file to point at; the commands that
+        // produce one refuse this format before getting here.
+        Format::Sarif => String::new(),
     }
 }
 
