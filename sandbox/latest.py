@@ -56,8 +56,13 @@ def pypi(name):
 
 
 def crates(name):
-    crate = json.loads(get(f"https://crates.io/api/v1/crates/{name}"))["crate"]
-    return crate.get("max_stable_version") or crate["max_version"]
+    # The sparse index is the endpoint meant for bulk lookups; the web API
+    # allows only one request a second. One JSON object per version.
+    name = name.lower()
+    prefix = {1: "1", 2: "2", 3: f"3/{name[0]}"}.get(len(name), f"{name[:2]}/{name[2:4]}")
+    lines = get(f"https://index.crates.io/{prefix}/{name}").splitlines()
+    versions = [json.loads(line) for line in lines if line.strip()]
+    return newest(v["vers"] for v in versions if not v.get("yanked"))
 
 
 def packagist(name):

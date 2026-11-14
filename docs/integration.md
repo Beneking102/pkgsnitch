@@ -52,6 +52,7 @@ pkgsnitch:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
+    - apk add --no-cache git
     - wget -qO /usr/local/bin/pkgsnitch https://github.com/Beneking102/pkgsnitch/releases/latest/download/pkgsnitch-linux-x86_64
     - chmod +x /usr/local/bin/pkgsnitch
     - git fetch --depth=1 origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"

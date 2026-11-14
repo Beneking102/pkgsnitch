@@ -141,7 +141,7 @@ Examples:
     /// Analyze the raw output directory of a sandbox run (for debugging)
     #[command(hide = true)]
     Analyze { dir: PathBuf },
-    /// Print what pkgsnitch reads from a lockfile (for debugging)
+    /// Print the pins pkgsnitch reads from a dependency file (for debugging)
     #[command(hide = true)]
     InspectLock { file: PathBuf },
     /// Compare two raw output directories instead of running the sandbox.
@@ -234,11 +234,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             })
         }
         Cmd::InspectLock { file } => {
-            let lock = plan::read_lock(&file)?;
-            let pins: Vec<_> = lock.pins().collect();
-            println!("{} {}", lock.ecosystem.id(), pins.len());
-            for (name, version) in pins {
-                println!("{name} {version}");
+            let pins = outdated::collect(std::slice::from_ref(&file), Path::new(""))?;
+            println!("{}", pins.len());
+            for found in pins {
+                let pinned = found.pinned;
+                println!(
+                    "{} {} {}",
+                    pinned.registry.id(),
+                    pinned.name,
+                    pinned.version
+                );
             }
             Ok(ExitCode::SUCCESS)
         }

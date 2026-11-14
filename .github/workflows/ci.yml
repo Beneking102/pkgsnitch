@@ -183,3 +183,21 @@ jobs:
           cat pylock.json
           jq -e '.outcomes | length == 1' pylock.json
           jq -e '.outcomes[0] | .name == "idna" and .to == "3.7" and .advice == "apply"' pylock.json
+
+  # The released Linux binary is static. It has to run on Alpine, which is
+  # what CI images such as docker:27 are built on, driving the host's Docker.
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Runs inside an Alpine container
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/repo" -w /repo docker:27 sh -euc '
+            bin=target/x86_64-unknown-linux-musl/release/pkgsnitch
+            $bin --version
+            sh demo/polyglot.sh /tmp/polyglot
+            $bin outdated /tmp/polyglot --format markdown
+            $bin diff left-pad 1.2.0 1.3.0
+          '
