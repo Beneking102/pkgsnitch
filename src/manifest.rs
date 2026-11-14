@@ -170,7 +170,8 @@ fn go_mod(text: &str) -> Vec<Pinned> {
         };
         let mut words = entry.split_whitespace();
         if let (Some(module), Some(version)) = (words.next(), words.next()) {
-            if version.starts_with('v') {
+            // `v0.0.0` is the placeholder of a module replaced by a local path.
+            if version.starts_with('v') && version != "v0.0.0" {
                 let direct = !entry.contains("// indirect");
                 pins.push(pin(Registry::Go, module, version, Some(direct)));
             }
@@ -410,7 +411,7 @@ mod tests {
 
     #[test]
     fn reads_go_mod() {
-        let text = "module example.com/app\n\ngo 1.22\n\nrequire github.com/gin-gonic/gin v1.9.1\n\nrequire (\n\tgithub.com/Masterminds/semver/v3 v3.2.1\n\tgolang.org/x/sys v0.20.0 // indirect\n)\n\nreplace example.com/x => ../x\n";
+        let text = "module example.com/app\n\ngo 1.22\n\nrequire github.com/gin-gonic/gin v1.9.1\n\nrequire (\n\tgithub.com/Masterminds/semver/v3 v3.2.1\n\tgolang.org/x/sys v0.20.0 // indirect\n\texample.com/x v0.0.0\n)\n\nreplace example.com/x => ../x\n";
         assert_eq!(
             found("go.mod", text),
             [
