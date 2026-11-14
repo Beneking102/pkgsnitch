@@ -33,10 +33,26 @@ outputs:
 runs:
   using: composite
   steps:
-    # The action's own checkout is the pkgsnitch source at the ref you pinned.
+    # Pinned to a release tag, the ready-made binary is downloaded. Otherwise
+    # pkgsnitch is built from the action's own checkout, which takes a minute.
     - name: Install pkgsnitch
       shell: bash
-      run: cargo install --locked --path "$GITHUB_ACTION_PATH"
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        bin="$RUNNER_TEMP/pkgsnitch-bin"
+        if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = X64 ] && [ -n "$ACTION_REPO" ] && [ -n "$ACTION_REF" ] \
+            && gh release download "$ACTION_REF" --repo "$ACTION_REPO" --pattern pkgsnitch-linux-x86_64 --dir "$bin" 2>/dev/null; then
+          mv "$bin/pkgsnitch-linux-x86_64" "$bin/pkgsnitch"
+          chmod +x "$bin/pkgsnitch"
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "pkgsnitch: using the $ACTION_REF release binary"
+        else
+          cargo install --locked --path "$GITHUB_ACTION_PATH"
+          echo "pkgsnitch: built from source"
+        fi
 
     - name: Compare lockfiles
       id: run
