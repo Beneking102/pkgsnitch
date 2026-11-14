@@ -146,9 +146,15 @@ impl Extractor {
         self.missing.remove(&(call.pid, label.clone()));
 
         // The first exec is the command pkgsnitch launched, not the package.
-        if self.launched {
+        // Its arguments name the version under test, which must not make
+        // the installer's own behavior look different between versions,
+        // so it is known by its first two words: `pip install`, `npm rebuild`.
+        let label = if self.launched {
             self.record(Kind::Exec, label.clone(), &proc.actor);
-        }
+            label
+        } else {
+            label.split(' ').take(2).collect::<Vec<_>>().join(" ")
+        };
         self.launched = true;
 
         let actor = match package_of(&proc.cwd) {
