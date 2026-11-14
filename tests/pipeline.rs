@@ -94,6 +94,32 @@ fn hijacked_release_is_caught() {
 }
 
 #[test]
+fn explain_shows_the_evidence_behind_each_finding() {
+    let plain = compare("demo-old", "demo-new", &[]);
+    assert!(!String::from_utf8_lossy(&plain.stdout).contains("seen: "));
+
+    let out = compare("demo-old", "demo-new", &["--explain"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("How this was observed"));
+    assert!(text.contains("system calls recorded"));
+    // The traced call that the SSH key finding rests on is quoted.
+    assert!(text.contains("seen: openat("), "{text}");
+    assert!(text.contains("/home/dev/.ssh/id_rsa"), "{text}");
+    assert!(text.contains("seen: execve("), "{text}");
+
+    // Machine output always carries it.
+    let json = compare("demo-old", "demo-new", &["--format", "json"]);
+    let report: Value = serde_json::from_slice(&json.stdout).unwrap();
+    let read = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["target"] == "~/.ssh/id_rsa")
+        .unwrap();
+    assert!(read["evidence"].as_str().unwrap().starts_with("openat("));
+}
+
+#[test]
 fn unchanged_release_is_clean() {
     let out = compare("demo-old", "demo-old", &["--format", "json"]);
     assert_eq!(out.status.code(), Some(0));

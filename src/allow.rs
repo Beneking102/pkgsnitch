@@ -155,6 +155,7 @@ mod tests {
             target: target.into(),
             actor: String::new(),
             why: "original".into(),
+            evidence: String::new(),
         }
     }
 

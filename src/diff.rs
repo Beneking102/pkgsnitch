@@ -18,6 +18,11 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
     let before: BTreeSet<&Behavior> = old.behaviors.iter().map(|o| &o.behavior).collect();
     let after: BTreeSet<&Behavior> = new.behaviors.iter().map(|o| &o.behavior).collect();
     let mut findings = Vec::new();
+    // The observation each behavior was read from, to quote in its finding.
+    let evidence = |profile: &Profile, b: &Behavior| {
+        let seen = profile.behaviors.iter().find(|o| &o.behavior == b);
+        seen.map(|o| o.evidence.clone()).unwrap_or_default()
+    };
 
     let added: Vec<&Behavior> = after.difference(&before).copied().collect();
     for b in &added {
@@ -25,7 +30,9 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
             continue;
         }
         let (severity, why) = rules::rate(b);
-        findings.push(behavior_finding(b, Change::Added, severity, why));
+        let mut finding = behavior_finding(b, Change::Added, severity, why);
+        finding.evidence = evidence(new, b);
+        findings.push(finding);
     }
     if mode == Mode::Update {
         for b in before.difference(&after) {
@@ -138,6 +145,7 @@ fn behavior_finding(b: &Behavior, change: Change, severity: Severity, why: Strin
         target: b.target.clone(),
         actor: b.actor.clone(),
         why,
+        evidence: String::new(),
     }
 }
 
@@ -156,6 +164,7 @@ fn manifest_finding(
         target,
         actor: String::new(),
         why: why.into(),
+        evidence: "read from the manifest and lockfile the fetch left behind".into(),
     }
 }
 
@@ -290,6 +299,7 @@ mod tests {
                 actor: actor.into(),
             },
             count: 1,
+            evidence: String::new(),
         };
         let a = profile("1.0.0", &[]);
         let mut b = profile("1.0.1", &[]);
@@ -317,6 +327,7 @@ mod tests {
                 actor: actor.into(),
             },
             count: 1,
+            evidence: String::new(),
         };
         let a = profile("1.0.0", &[]);
         let mut b = profile("1.0.1", &[]);
@@ -366,6 +377,7 @@ mod tests {
                         actor: "npm".into(),
                     },
                     count: 1,
+                    evidence: String::new(),
                 })
                 .collect(),
             manifest: Manifest::default(),

@@ -91,6 +91,9 @@ pub struct Observed {
     #[serde(flatten)]
     pub behavior: Behavior,
     pub count: u32,
+    /// What this was read from: a traced syscall or a sinkhole record.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +148,9 @@ pub struct Finding {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub actor: String,
     pub why: String,
+    /// The observation the finding rests on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

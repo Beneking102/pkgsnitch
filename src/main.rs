@@ -142,6 +142,9 @@ struct Options {
     /// `updates` and `lock`: evaluate this many updates at once
     #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=16))]
     jobs: u8,
+    /// Show how the observation was made and the evidence behind every finding
+    #[arg(long)]
+    explain: bool,
     /// File of accepted behaviors [default: .pkgsnitch-allow if present]
     #[arg(long, value_name = "FILE")]
     allow: Option<PathBuf>,
@@ -179,7 +182,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 profile::build(&new).with_context(|| format!("analyzing {}", new.display()))?;
             let mut report = diff::compare(&before, &after, Mode::Update);
             Allowlist::load(opts.allow.as_deref())?.apply(&mut report);
-            anstream::print!("{}", report::render(&report, opts.format));
+            anstream::print!("{}", report::render(&report, opts.format, opts.explain));
             Ok(exit_code(report.verdict, &opts))
         }
         Cmd::Diff { targets, opts } => {
@@ -285,7 +288,7 @@ fn single(old: &Target, new: &Target, mode: Mode, opts: &Options) -> Result<Exit
     let allow = Allowlist::load(opts.allow.as_deref())?;
     let mut report = with_session(opts, |session| session.compare(old, new, mode))?;
     allow.apply(&mut report);
-    anstream::print!("{}", report::render(&report, opts.format));
+    anstream::print!("{}", report::render(&report, opts.format, opts.explain));
     Ok(exit_code(report.verdict, opts))
 }
 

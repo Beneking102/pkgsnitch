@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use owo_colors::OwoColorize;
 
-use crate::model::{Change, Finding, Report, Severity};
+use crate::model::{Change, Finding, Phase, Report, Severity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Format {
@@ -16,9 +16,11 @@ pub enum Format {
     Sarif,
 }
 
-pub fn render(report: &Report, format: Format) -> String {
+/// Render a report. `explain` adds, to the terminal form, how the
+/// observation was made and the evidence each finding rests on.
+pub fn render(report: &Report, format: Format, explain: bool) -> String {
     match format {
-        Format::Terminal => terminal(report),
+        Format::Terminal => terminal(report, explain),
         Format::Json => {
             serde_json::to_string_pretty(report).expect("report is serializable") + "\n"
         }
@@ -50,14 +52,56 @@ fn paint(s: Severity, text: &str) -> String {
     }
 }
 
+/// The observation behind a finding, labeled.
+fn proof(f: &Finding) -> String {
+    format!("seen: {}", f.evidence)
+}
+
 fn split(r: &Report) -> (Vec<&Finding>, Vec<&Finding>) {
     r.findings.iter().partition(|f| f.change != Change::Removed)
 }
 
-fn terminal(r: &Report) -> String {
+/// How the observation was made, in the user's terms.
+fn method(r: &Report) -> String {
+    let traced = |wanted: Phase| {
+        r.phases
+            .iter()
+            .find(|p| p.phase == wanted)
+            .map_or(0, |p| p.syscalls)
+    };
+    let compared = match &r.old {
+        Some(_) => "Both versions ran, each in its own throwaway container; only what the new one adds is listed.",
+        None => "The package ran in a throwaway container; what an empty project does anyway is left out.",
+    };
+    [
+        "How this was observed".to_string(),
+        format!("  {compared}"),
+        "  1. fetch    downloaded with the network on, without running any package code".to_string(),
+        format!(
+            "  2. install  network cut; install scripts ran under strace ({} system calls recorded)",
+            traced(Phase::Install)
+        ),
+        format!(
+            "  3. import   the package was loaded under strace ({} system calls recorded)",
+            traced(Phase::Import)
+        ),
+        "  File, process and network findings are read from those recorded system calls.".to_string(),
+        "  Host names and requests come from a sinkhole that answered all DNS and ports 80/443.".to_string(),
+        "  Secrets were bait: planted files and variables carrying a marker, recognized if sent.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn terminal(r: &Report, explain: bool) -> String {
     let mut o = String::new();
     let (new, gone) = split(r);
     let _ = writeln!(o, "\n  {}  {}\n", "pkgsnitch".bold(), heading(r).bold());
+    if explain {
+        for line in method(r).lines() {
+            let _ = writeln!(o, "  {}", line.dimmed());
+        }
+        o.push('\n');
+    }
 
     if new.is_empty() {
         let what = if r.old.is_some() {
@@ -78,6 +122,9 @@ fn terminal(r: &Report) -> String {
                 phase.dimmed(),
                 format!("{}: {}", f.title, f.target).dimmed()
             );
+            if explain && !f.evidence.is_empty() {
+                let _ = writeln!(o, "  {:<8}  {:<8}  {}", "", "", proof(f).dimmed());
+            }
             continue;
         }
         let _ = writeln!(
@@ -97,7 +144,11 @@ fn terminal(r: &Report) -> String {
                 format!("by {}", f.actor).dimmed()
             );
         }
-        let _ = writeln!(o, "  {:<8}  {:<8}  {}\n", "", "", f.why.dimmed());
+        let _ = writeln!(o, "  {:<8}  {:<8}  {}", "", "", f.why.dimmed());
+        if explain && !f.evidence.is_empty() {
+            let _ = writeln!(o, "  {:<8}  {:<8}  {}", "", "", proof(f).cyan());
+        }
+        o.push('\n');
     }
     if new.last().is_some_and(|f| f.severity <= Severity::Low) {
         o.push('\n');
@@ -215,6 +266,7 @@ mod tests {
                     target: "~/.ssh/id_rsa".into(),
                     actor: "sh -c a | b `c`".into(),
                     why: "reads SSH keys".into(),
+                    evidence: String::new(),
                 },
                 Finding {
                     severity: Severity::Info,
@@ -224,6 +276,7 @@ mod tests {
                     target: "node old.js".into(),
                     actor: String::new(),
                     why: "no longer observed".into(),
+                    evidence: String::new(),
                 },
             ],
             phases: vec![],
@@ -232,7 +285,7 @@ mod tests {
 
     #[test]
     fn markdown_escapes_table_breakers() {
-        let md = render(&report(), Format::Markdown);
+        let md = render(&report(), Format::Markdown, false);
         assert!(md.contains("demo 1.0.0 -> 1.0.1"));
         assert!(md.contains(r"`sh -c a \| b 'c'`"));
         assert!(md.contains("No longer observed (1)"));
@@ -240,7 +293,7 @@ mod tests {
 
     #[test]
     fn json_round_trips() {
-        let json = render(&report(), Format::Json);
+        let json = render(&report(), Format::Json, false);
         let back: Report = serde_json::from_str(&json).unwrap();
         assert_eq!(back.findings.len(), 2);
         assert_eq!(back.verdict, Severity::Critical);
@@ -248,7 +301,7 @@ mod tests {
 
     #[test]
     fn terminal_mentions_every_new_finding() {
-        let text = render(&report(), Format::Terminal);
+        let text = render(&report(), Format::Terminal, false);
         assert!(text.contains("~/.ssh/id_rsa"));
         assert!(text.contains("1 new, 1 gone"));
     }

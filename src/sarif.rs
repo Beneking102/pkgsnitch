@@ -128,6 +128,7 @@ mod tests {
             target: "~/.ssh/id_rsa".into(),
             actor: "python setup.py".into(),
             why: "reads SSH keys".into(),
+            evidence: String::new(),
         };
         let report = Report {
             schema: SCHEMA,

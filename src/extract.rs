@@ -8,7 +8,18 @@ use crate::model::{Behavior, Kind, Phase};
 use crate::rules::{self, norm, WORK};
 use crate::strace::{self, Addr, Call, Parser, Ret};
 
-pub type Behaviors = BTreeMap<Behavior, u32>;
+/// How often a behavior was seen, and the first observation of it.
+#[derive(Debug, Clone, Default)]
+pub struct Seen {
+    pub count: u32,
+    /// The syscall, as traced, that this behavior was read from.
+    pub evidence: String,
+}
+
+pub type Behaviors = BTreeMap<Behavior, Seen>;
+
+/// Evidence is quoted in reports, so a long argument list is cut.
+const EVIDENCE_MAX: usize = 220;
 
 const ACTOR_MAX: usize = 120;
 
@@ -46,13 +57,16 @@ pub fn from_trace(phase: Phase, trace: impl BufRead) -> (Behaviors, usize) {
         out: Behaviors::new(),
         launched: false,
         missing: BTreeMap::new(),
+        evidence: String::new(),
     };
     for call in &calls {
+        ex.evidence = evidence(call);
         ex.handle(call);
     }
     // Commands that were looked for but exist nowhere on PATH still show
     // intent: a script that wants `curl` is news even if the sandbox lacks it.
-    for ((_, label), actor) in std::mem::take(&mut ex.missing) {
+    for ((_, label), (actor, seen)) in std::mem::take(&mut ex.missing) {
+        ex.evidence = seen;
         ex.record(Kind::Exec, format!("{label} (not installed)"), &actor);
     }
     (ex.out, calls.len())
@@ -67,7 +81,9 @@ struct Extractor {
     launched: bool,
     /// Failed exec attempts by (pid, command), dropped again if a later
     /// attempt in the same PATH search succeeds.
-    missing: BTreeMap<(u32, String), String>,
+    missing: BTreeMap<(u32, String), (String, String)>,
+    /// The call being handled, quoted with whatever it makes us record.
+    evidence: String,
 }
 
 impl Extractor {
@@ -93,7 +109,11 @@ impl Extractor {
             target,
             actor: actor.to_string(),
         };
-        *self.out.entry(behavior).or_insert(0) += 1;
+        let seen = self.out.entry(behavior).or_default();
+        if seen.count == 0 {
+            seen.evidence = self.evidence.clone();
+        }
+        seen.count += 1;
     }
 
     fn handle(&mut self, call: &Call) {
@@ -107,7 +127,8 @@ impl Extractor {
             "execve" | "execveat" if call.ret == Ret::Err("ENOENT".into()) => {
                 self.secret_in_argv(call, &proc);
                 if let Some(label) = exec_label(&call.args) {
-                    self.missing.insert((call.pid, label), proc.actor);
+                    self.missing
+                        .insert((call.pid, label), (proc.actor, self.evidence.clone()));
                 }
             }
             "chdir" if ok => {
@@ -231,6 +252,22 @@ impl Extractor {
     }
 }
 
+/// A call as strace printed it, shortened: what a finding is quoted from.
+fn evidence(call: &Call) -> String {
+    let result = match &call.ret {
+        Ret::Ok(value) => value.to_string(),
+        Ret::Err(errno) => format!("-1 {errno}"),
+        Ret::Unknown => "?".to_string(),
+    };
+    let args: String = call.args.chars().take(EVIDENCE_MAX).collect();
+    let cut = if args.len() < call.args.len() {
+        "…"
+    } else {
+        ""
+    };
+    format!("{}({args}{cut}) = {result}", call.name)
+}
+
 /// The normalized command line of an exec call: program name plus arguments.
 fn exec_label(args: &str) -> Option<String> {
     let toks = strace::strings(args);
@@ -336,6 +373,9 @@ mod tests {
 
     fn run(trace: &str) -> Vec<(Kind, String, String)> {
         let (b, _) = from_trace(Phase::Install, trace.as_bytes());
+        assert!(b
+            .values()
+            .all(|seen| seen.count > 0 && !seen.evidence.is_empty()));
         b.into_keys().map(|b| (b.kind, b.target, b.actor)).collect()
     }
 

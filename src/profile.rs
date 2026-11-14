@@ -32,9 +32,7 @@ pub fn build(dir: &Path) -> Result<Profile> {
         if let Ok(file) = File::open(&trace) {
             let (found, count) = extract::from_trace(phase, BufReader::new(file));
             syscalls = count;
-            for (behavior, n) in found {
-                *behaviors.entry(behavior).or_insert(0) += n;
-            }
+            behaviors.extend(found);
         }
         let exit_code = fs::read_to_string(dir.join(format!("{label}.rc")))
             .ok()
@@ -69,7 +67,11 @@ pub fn build(dir: &Path) -> Result<Profile> {
                     target,
                     actor: String::new(),
                 };
-                *behaviors.entry(behavior).or_insert(0) += 1;
+                let seen = behaviors.entry(behavior).or_default();
+                if seen.count == 0 {
+                    seen.evidence = event.evidence();
+                }
+                seen.count += 1;
             };
             if event.carries_secret() {
                 record(
@@ -92,7 +94,11 @@ pub fn build(dir: &Path) -> Result<Profile> {
         version,
         behaviors: behaviors
             .into_iter()
-            .map(|(behavior, count)| Observed { behavior, count })
+            .map(|(behavior, seen)| Observed {
+                behavior,
+                count: seen.count,
+                evidence: seen.evidence,
+            })
             .collect(),
         manifest: manifest(&manifest_json, &read_json(&dir.join("lock.json")), name),
         phases,
@@ -115,6 +121,32 @@ struct NetEvent {
 }
 
 impl NetEvent {
+    /// What the sinkhole saw, in words: the record a finding is quoted from.
+    fn evidence(&self) -> String {
+        let port = self.port.unwrap_or(0);
+        match self.t.as_str() {
+            "dns" => format!(
+                "sinkhole answered a DNS query for {}",
+                self.name.as_deref().unwrap_or("?")
+            ),
+            "tls" => format!(
+                "sinkhole port {port} received a TLS handshake naming {}",
+                self.sni.as_deref().unwrap_or("no server")
+            ),
+            _ => {
+                let first = self
+                    .data
+                    .as_deref()
+                    .unwrap_or("")
+                    .lines()
+                    .next()
+                    .unwrap_or("");
+                let first: String = first.chars().take(160).collect();
+                format!("sinkhole port {port} received: {first}")
+            }
+        }
+    }
+
     /// Whether a planted secret shows up in the name asked for or the
     /// bytes sent.
     fn carries_secret(&self) -> bool {
@@ -209,6 +241,10 @@ fn manifest(package_json: &Value, lock: &Value, name: &str) -> Manifest {
     m
 }
 
+/// Bumped when the stored shape of a profile changes, so that results
+/// written by an older build are observed again rather than misread.
+const PROFILE_FORMAT: u32 = 2;
+
 /// On-disk cache of finished profiles, keyed by package, version, pkgsnitch
 /// version and sandbox contents.
 pub struct Cache {
@@ -221,7 +257,10 @@ impl Cache {
         let root = enabled.then(cache_root).flatten();
         Self {
             root,
-            key: format!("{}-{sandbox_fingerprint}", env!("CARGO_PKG_VERSION")),
+            key: format!(
+                "{}-{PROFILE_FORMAT}-{sandbox_fingerprint}",
+                env!("CARGO_PKG_VERSION")
+            ),
         }
     }
 

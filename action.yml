@@ -6,17 +6,23 @@ branding:
   color: red
 
 inputs:
+  command:
+    description: "`lock` reviews what a pull request changes in the lockfile. `updates` finds newer versions of the direct dependencies and tests them, for a scheduled run."
+    default: lock
   lockfile:
-    description: "Path to the lockfile to review: package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock or uv.lock."
+    description: "Path to the lockfile: package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock or uv.lock. `updates` needs package-lock.json or requirements.txt."
     default: package-lock.json
   base-ref:
-    description: Git ref holding the lockfile before the change. Defaults to the pull request's base branch.
+    description: "`lock`: git ref holding the lockfile before the change. Defaults to the pull request's base branch."
     default: ""
+  level:
+    description: "`updates`: largest version jump to propose (patch, minor, major)."
+    default: major
   fail-on:
     description: Fail the job when a finding is at least this severe (info, low, medium, high, critical).
     default: high
   max:
-    description: Evaluate at most this many changed packages.
+    description: Evaluate at most this many packages.
     default: "20"
   comment:
     description: "Post the report as a pull request comment, updated in place on later runs. Needs the pull-requests write permission."
@@ -29,6 +35,9 @@ outputs:
   report:
     description: Path to the Markdown report.
     value: ${{ steps.run.outputs.report }}
+  sarif:
+    description: Path to the same findings as SARIF, for github/codeql-action/upload-sarif.
+    value: ${{ steps.run.outputs.sarif }}
 
 runs:
   using: composite
@@ -54,35 +63,48 @@ runs:
           echo "pkgsnitch: built from source"
         fi
 
-    - name: Compare lockfiles
+    - name: Run pkgsnitch
       id: run
       shell: bash
       env:
+        COMMAND: ${{ inputs.command }}
         LOCKFILE: ${{ inputs.lockfile }}
         BASE_REF: ${{ inputs.base-ref || github.base_ref }}
+        LEVEL: ${{ inputs.level }}
         FAIL_ON: ${{ inputs.fail-on }}
         MAX: ${{ inputs.max }}
         COMMENT: ${{ inputs.comment }}
         PR: ${{ github.event.pull_request.number }}
         GH_TOKEN: ${{ inputs.token }}
       run: |
-        if [ -z "$BASE_REF" ]; then
-          echo "::error::pkgsnitch needs a base ref: run it on pull_request events or set the base-ref input."
-          exit 2
-        fi
-        git fetch --quiet --depth=1 origin "$BASE_REF"
-        # Same file name as the original, in a directory of its own.
-        mkdir -p "$RUNNER_TEMP/pkgsnitch-base"
-        base="$RUNNER_TEMP/pkgsnitch-base/$(basename "$LOCKFILE")"
         report="$RUNNER_TEMP/pkgsnitch-report.md"
+        sarif="$RUNNER_TEMP/pkgsnitch.sarif"
         echo "report=$report" >> "$GITHUB_OUTPUT"
-        if ! git show "FETCH_HEAD:$LOCKFILE" > "$base" 2>/dev/null; then
-          echo "No $LOCKFILE on $BASE_REF; nothing to compare." | tee "$report" >> "$GITHUB_STEP_SUMMARY"
-          exit 0
-        fi
+        echo "sarif=$sarif" >> "$GITHUB_OUTPUT"
+
+        case "$COMMAND" in
+          lock)
+            if [ -z "$BASE_REF" ]; then
+              echo "::error::pkgsnitch needs a base ref: run it on pull_request events or set the base-ref input."
+              exit 2
+            fi
+            git fetch --quiet --depth=1 origin "$BASE_REF"
+            set -- lock --since FETCH_HEAD "$LOCKFILE"
+            ;;
+          updates)
+            set -- updates "$LOCKFILE" --level "$LEVEL"
+            ;;
+          *)
+            echo "::error::unknown command '$COMMAND' (use lock or updates)"
+            exit 2
+            ;;
+        esac
+
         status=0
-        pkgsnitch lock "$base" "$LOCKFILE" --format markdown --fail-on "$FAIL_ON" --max "$MAX" > "$report" || status=$?
+        pkgsnitch "$@" --format markdown --fail-on "$FAIL_ON" --max "$MAX" > "$report" || status=$?
         cat "$report" >> "$GITHUB_STEP_SUMMARY"
+        # The observations are cached, so the second format costs nothing.
+        pkgsnitch "$@" --format sarif --fail-on "$FAIL_ON" --max "$MAX" > "$sarif" 2>/dev/null || true
         if [ "$COMMENT" = true ] && [ -n "$PR" ]; then
           gh pr comment "$PR" --body-file "$report" --edit-last --create-if-none \
             || echo "::warning::pkgsnitch could not comment on the pull request (is pull-requests: write granted?)"

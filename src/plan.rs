@@ -695,7 +695,7 @@ fn markdown(plan: &Plan) -> String {
                 x.update.name,
                 versions(&x.update)
             );
-            o.push_str(&crate::report::render(report, Format::Markdown));
+            o.push_str(&crate::report::render(report, Format::Markdown, false));
             o.push_str("\n</details>\n");
         }
     }
@@ -727,6 +727,7 @@ mod tests {
                 target: "curl evil".into(),
                 actor: String::new(),
                 why: String::new(),
+                evidence: String::new(),
             })
             .into_iter()
             .collect();
