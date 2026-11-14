@@ -510,6 +510,17 @@ impl Plan {
         }
     }
 
+    /// What to say when there is nothing to evaluate. A lockfile change
+    /// that only removes versions, or settles on ones already present,
+    /// brings no new code in.
+    fn nothing_to_do(&self) -> &'static str {
+        if self.suggest_command {
+            "Nothing to update."
+        } else {
+            "No package version is new in this change, so there is nothing to observe."
+        }
+    }
+
     fn count(&self, advice: Advice) -> usize {
         self.outcomes.iter().filter(|o| o.advice == advice).count()
     }
@@ -567,7 +578,7 @@ fn terminal(plan: &Plan) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "\n  {}  {}\n", "pkgsnitch".bold(), "patch plan".bold());
     if plan.outcomes.is_empty() {
-        let _ = writeln!(o, "  {} Nothing to update.", "ok".green().bold());
+        let _ = writeln!(o, "  {} {}", "ok".green().bold(), plan.nothing_to_do());
         return o;
     }
     let name_width = plan
@@ -614,7 +625,7 @@ fn markdown(plan: &Plan) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "### pkgsnitch patch plan\n");
     if plan.outcomes.is_empty() {
-        o.push_str("Nothing to update.\n");
+        let _ = writeln!(o, "{}", plan.nothing_to_do());
         return o;
     }
     let _ = writeln!(o, "{}\n", plan.summary());
