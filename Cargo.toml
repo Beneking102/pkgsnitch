@@ -1,6 +1,6 @@
 [package]
 name = "pkgsnitch"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.80"
 description = "Behavioral diff for package updates: see what a new version does at install and import time that the old one did not."

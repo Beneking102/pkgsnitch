@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Beneking102/pkgsnitch@v0.1.0
+      - uses: Beneking102/pkgsnitch@v0.2.0
         with:
           lockfile: package-lock.json   # or yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock, uv.lock
 ```
@@ -85,7 +85,7 @@ jobs:
 **Which updates are safe to take?** For npm and Python, `updates` tests every newer version and writes the plan to the job summary:
 
 ```yaml
-      - uses: Beneking102/pkgsnitch@v0.1.0
+      - uses: Beneking102/pkgsnitch@v0.2.0
         with:
           command: updates
           lockfile: package-lock.json   # or requirements.txt
@@ -103,7 +103,7 @@ permissions:
   security-events: write
 steps:
   - uses: actions/checkout@v4
-  - uses: Beneking102/pkgsnitch@v0.1.0
+  - uses: Beneking102/pkgsnitch@v0.2.0
     id: pkgsnitch
     continue-on-error: true
   - uses: github/codeql-action/upload-sarif@v3
