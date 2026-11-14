@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -25,6 +26,7 @@ const ASSETS: &[(&str, &str)] = &[
     ("pyfetch.py", include_str!("../sandbox/pyfetch.py")),
     ("pymodules.py", include_str!("../sandbox/pymodules.py")),
     ("pyversions.py", include_str!("../sandbox/pyversions.py")),
+    ("latest.py", include_str!("../sandbox/latest.py")),
 ];
 
 /// Where a copied-in npm tarball lives inside the sandbox.
@@ -319,6 +321,33 @@ impl Sandbox {
             .filter_map(|line| line.split_once('\t'))
             .filter_map(|(name, json)| Some((name.to_string(), Available::parse(json)?)))
             .collect())
+    }
+
+    /// Ask the registries of many ecosystems for latest versions. Takes
+    /// and returns the tab-separated lines `sandbox/latest.py` speaks.
+    pub fn latest(&self, questions: &str) -> Result<String> {
+        if questions.is_empty() {
+            return Ok(String::new());
+        }
+        let mut input = tempfile::tempfile()?;
+        input.write_all(questions.as_bytes())?;
+        input.seek(SeekFrom::Start(0))?;
+        let container = Container::start(self)?;
+        let out = self
+            .run_with(
+                &[
+                    "exec",
+                    "--interactive",
+                    "--user",
+                    "dev",
+                    container.id.as_str(),
+                    "python3",
+                    "/opt/pkgsnitch/latest.py",
+                ],
+                Stdio::from(input),
+            )
+            .context("could not query the registries")?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     fn copy_out(&self, id: &str, from: &str, to: &Path) -> Result<()> {

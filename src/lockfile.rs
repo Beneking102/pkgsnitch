@@ -14,7 +14,8 @@ pub type Pin = (String, String);
 /// of those.
 pub fn pinned(text: &str) -> Option<(Ecosystem, Vec<Pin>)> {
     let has_line = |wanted: &str| text.lines().any(|line| line.trim_end() == wanted);
-    if text.trim_start().starts_with('{') {
+    // A Cargo.lock has the same tables as the Python locks but is neither.
+    if text.trim_start().starts_with('{') || crate::manifest::is_cargo_lock(text) {
         None
     } else if has_line("[[package]]") {
         Some((Ecosystem::PyPI, toml_packages(text)))

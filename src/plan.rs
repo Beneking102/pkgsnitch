@@ -168,6 +168,11 @@ impl Lock {
         })
     }
 
+    /// Whether the project asks for `name` itself, if the file says.
+    pub fn is_direct(&self, name: &str) -> Option<bool> {
+        self.knows_direct().then(|| self.direct.contains(name))
+    }
+
     /// Whether the file names the project's own dependencies.
     pub fn knows_direct(&self) -> bool {
         !self.direct.is_empty()
@@ -207,7 +212,7 @@ pub enum Bump {
 }
 
 impl Bump {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Bump::Patch => "patch",
             Bump::Minor => "minor",
@@ -244,7 +249,7 @@ fn segment(numbers: &[u64], index: usize) -> u64 {
     numbers.get(index).copied().unwrap_or(0)
 }
 
-fn order(a: &str, b: &str) -> Ordering {
+pub(crate) fn order(a: &str, b: &str) -> Ordering {
     match (parse_version(a), parse_version(b)) {
         (Some((x, xp)), Some((y, yp))) => (0..x.len().max(y.len()))
             .map(|i| segment(&x, i).cmp(&segment(&y, i)))
@@ -260,7 +265,7 @@ fn order(a: &str, b: &str) -> Ordering {
     }
 }
 
-fn bump(from: &str, to: &str) -> Bump {
+pub(crate) fn bump(from: &str, to: &str) -> Bump {
     let (Some((a, _)), Some((b, _))) = (parse_version(from), parse_version(to)) else {
         return Bump::Other;
     };

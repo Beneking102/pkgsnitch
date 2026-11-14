@@ -8,7 +8,9 @@ mod canary;
 mod diff;
 mod extract;
 mod lockfile;
+mod manifest;
 mod model;
+mod outdated;
 mod plan;
 mod profile;
 mod report;
@@ -105,6 +107,37 @@ enum Cmd {
         #[command(flatten)]
         opts: Options,
     },
+    /// Version management: list pinned dependencies that are behind their registry
+    #[command(
+        after_help = "Reads the dependency files of npm, Python, PHP (Composer), Rust (Cargo), Go, Ruby
+(Bundler), .NET (NuGet), Java (Maven, Gradle) and C++ (vcpkg, Conan), asks each registry
+for the latest stable version and lists what is behind. No package code runs.
+
+Examples:
+  pkgsnitch outdated
+  pkgsnitch outdated --recursive --fail-if major     fail a pipeline on major gaps
+  pkgsnitch outdated ./composer.lock --format markdown"
+    )]
+    Outdated {
+        /// Project directory, or a single dependency file
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Also look in subdirectories
+        #[arg(long)]
+        recursive: bool,
+        /// Leave out dependencies the files mark as transitive
+        #[arg(long)]
+        direct: bool,
+        /// Exit with status 1 if anything is behind by at least this much
+        #[arg(long, value_enum, value_name = "LEVEL")]
+        fail_if: Option<Level>,
+        /// Output format
+        #[arg(long, value_enum, default_value = "terminal")]
+        format: Format,
+        /// Container runtime to drive
+        #[arg(long, default_value = "docker")]
+        runtime: String,
+    },
     /// Analyze the raw output directory of a sandbox run (for debugging)
     #[command(hide = true)]
     Analyze { dir: PathBuf },
@@ -162,6 +195,44 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
+        Cmd::Outdated {
+            path,
+            recursive,
+            direct,
+            fail_if,
+            format,
+            runtime,
+        } => {
+            let files = outdated::discover(&path, recursive)?;
+            if files.is_empty() {
+                bail!(
+                    "no dependency file found in `{}` (try --recursive, or name the file)",
+                    path.display()
+                );
+            }
+            let base = if path.is_dir() {
+                path.as_path()
+            } else {
+                Path::new("")
+            };
+            let pins = outdated::collect(&files, base)?;
+            eprintln!(
+                "  {} pinned versions in {} files; asking the registries...",
+                pins.len(),
+                files.len()
+            );
+            let sandbox = Sandbox::new(&runtime, 0)?;
+            sandbox.ensure_image()?;
+            let answers = sandbox.latest(&outdated::questions(&pins))?;
+            let report = outdated::compare(pins, &answers, direct);
+            anstream::print!("{}", outdated::render(&report, format)?);
+            let failed = fail_if.is_some_and(|level| report.exceeds(level));
+            Ok(if failed {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
         Cmd::InspectLock { file } => {
             let lock = plan::read_lock(&file)?;
             let pins: Vec<_> = lock.pins().collect();

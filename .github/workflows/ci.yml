@@ -92,6 +92,24 @@ jobs:
           set -e
           cat scan.json
           jq -e '.findings[] | select(.title == "has install script")' scan.json
+      - name: outdated finds old pins in ten ecosystems
+        run: |
+          sh demo/polyglot.sh "$RUNNER_TEMP/polyglot"
+          set +e
+          target/release/pkgsnitch outdated "$RUNNER_TEMP/polyglot" --fail-if major --format json > outdated.json
+          status=$?
+          set -e
+          cat outdated.json
+          test "$status" -eq 1
+          # One package per registry must be reported as behind.
+          for registry in npm pypi crates packagist rubygems go nuget maven vcpkg conan; do
+            jq -e --arg r "$registry" '[.outdated[] | select(.registry == $r)] | length > 0' outdated.json
+          done
+          jq -e '.unknown | length == 0' outdated.json
+          jq -e '.outdated[] | select(.name == "symfony/console") | .bump == "major" and .file == "composer.lock"' outdated.json
+          target/release/pkgsnitch outdated "$RUNNER_TEMP/polyglot"
+          # Without --fail-if the command only reports.
+          target/release/pkgsnitch outdated "$RUNNER_TEMP/polyglot" --direct --format markdown
 
   # Python packages from PyPI.
   pypi:
