@@ -1,0 +1,60 @@
+name: watch
+
+# Once a week: compare the latest release of the packages in
+# watch/packages.txt with the release before it, and publish the result.
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo build --release --locked
+      # Exact versions never change, so only releases new since last week
+      # are observed again.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pkgsnitch
+          key: watch-${{ github.run_id }}
+          restore-keys: watch-
+      - name: Observe
+        run: |
+          status=0
+          target/release/pkgsnitch watch watch/packages.txt --format json --jobs 4 --timeout 240 > watch.json || status=$?
+          # 1 means "something was found", which is a result, not a failure.
+          test "$status" -le 1
+      - name: Build the page
+        run: node watch/page.js watch.json site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watch
+          path: site
+      - uses: actions/upload-pages-artifact@v3
+        if: github.repository == 'Beneking102/pkgsnitch'
+        with:
+          path: site
+
+  publish:
+    needs: observe
+    if: github.repository == 'Beneking102/pkgsnitch'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deploy

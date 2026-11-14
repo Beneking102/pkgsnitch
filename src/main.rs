@@ -90,6 +90,19 @@ enum Cmd {
         #[command(flatten)]
         opts: Options,
     },
+    /// Compare the latest release of each listed package with the one before it
+    #[command(
+        after_help = "Reads a list of package names, one per line (`pypi:` in front of Python packages),\nand runs the behavioral diff from the release before the latest to the latest.\nMeant for a scheduled job that keeps an eye on packages many projects depend on.\n\nExample:\n  pkgsnitch watch packages.txt --format json > watch.json"
+    )]
+    Watch {
+        /// File with one package name per line
+        list: PathBuf,
+        /// Evaluate at most this many packages
+        #[arg(long, default_value_t = 500)]
+        max: usize,
+        #[command(flatten)]
+        opts: Options,
+    },
     /// Review every change between two lockfiles, e.g. in a dependency pull request
     #[command(
         after_help = "Examples:\n  pkgsnitch lock --since origin/main            every lockfile here, against a git ref\n  pkgsnitch lock --since HEAD yarn.lock         what is about to be committed\n  pkgsnitch lock old-lock.json package-lock.json"
@@ -271,6 +284,34 @@ fn run(cli: Cli) -> Result<ExitCode> {
             Mode::Scan,
             &opts,
         ),
+        Cmd::Watch { list, max, opts } => {
+            let text = std::fs::read_to_string(&list)
+                .with_context(|| format!("reading {}", list.display()))?;
+            let wanted = plan::parse_watch_list(&text);
+            for (_, name) in &wanted {
+                validate(name, "package name")?;
+            }
+            with_session(&opts, |session| {
+                let mut updates = Vec::new();
+                for ecosystem in [Ecosystem::Npm, Ecosystem::PyPI] {
+                    let names: Vec<String> = wanted
+                        .iter()
+                        .filter(|(found, _)| *found == ecosystem)
+                        .map(|(_, name)| name.clone())
+                        .collect();
+                    eprintln!(
+                        "  asking the {} registry about {} packages...",
+                        ecosystem.id(),
+                        names.len()
+                    );
+                    let available = session.sandbox.available_versions(ecosystem, &names)?;
+                    updates.extend(names.iter().filter_map(|name| {
+                        plan::latest_step(ecosystem, name, available.get(name)?)
+                    }));
+                }
+                evaluate(session, updates, max, false, &opts)
+            })
+        }
         Cmd::Lock {
             files,
             since,

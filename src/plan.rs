@@ -378,6 +378,18 @@ impl Available {
         Some(Self { latest, versions })
     }
 
+    /// The stable release that came right before the latest one.
+    fn previous(&self) -> Option<&str> {
+        self.versions
+            .iter()
+            .map(String::as_str)
+            .filter(|v| {
+                parse_version(v).is_some_and(|(_, pre)| pre.is_empty())
+                    && order(v, &self.latest) == Ordering::Less
+            })
+            .max_by(|a, b| order(a, b))
+    }
+
     /// The newest stable version above `installed` that stays within
     /// `level` and does not go past what the maintainers call latest.
     fn pick(&self, installed: &str, level: Level) -> Option<&str> {
@@ -402,6 +414,29 @@ impl Available {
             })
             .max_by(|a, b| order(a, b))
     }
+}
+
+/// The step every user of a package takes next: from the release before
+/// the latest to the latest. `None` for a package with a single release.
+pub fn latest_step(ecosystem: Ecosystem, name: &str, available: &Available) -> Option<Update> {
+    let previous = available.previous()?;
+    Some(Update::new(name, Some(previous), &available.latest, true).of(ecosystem))
+}
+
+/// A watch list: one package per line, `pypi:` in front of Python packages,
+/// `#` for comments.
+pub fn parse_watch_list(text: &str) -> Vec<(Ecosystem, String)> {
+    text.lines()
+        .map(|line| line.split('#').next().unwrap_or("").trim())
+        .filter(|line| !line.is_empty())
+        .map(|line| match line.strip_prefix("pypi:") {
+            Some(name) => (Ecosystem::PyPI, normalize_python(name)),
+            None => (
+                Ecosystem::Npm,
+                line.strip_prefix("npm:").unwrap_or(line).to_string(),
+            ),
+        })
+        .collect()
 }
 
 /// The largest version jump `updates` may propose.
@@ -904,6 +939,45 @@ mod tests {
         assert_eq!(offer.pick("3.6", Level::Major), Some("3.7"));
         assert_eq!(offer.pick("3.6", Level::Patch), Some("3.6.1"));
         assert_eq!(offer.pick("3.7", Level::Major), None);
+    }
+
+    #[test]
+    fn watch_compares_the_latest_release_with_the_one_before() {
+        let offer = |latest: &str, versions: &[&str]| Available {
+            latest: latest.into(),
+            versions: versions.iter().map(|v| v.to_string()).collect(),
+        };
+        // Prereleases and versions past the latest tag are not "the one before".
+        let step = latest_step(
+            Ecosystem::Npm,
+            "left-pad",
+            &offer(
+                "1.3.0",
+                &["1.1.3", "1.2.0", "1.3.0-rc.1", "1.3.0", "2.0.0-beta.1"],
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            (step.from.as_deref(), step.to.as_str(), step.bump),
+            (Some("1.2.0"), "1.3.0", Bump::Minor)
+        );
+        assert_eq!(
+            latest_step(Ecosystem::Npm, "new", &offer("1.0.0", &["1.0.0"])),
+            None
+        );
+
+        let list = parse_watch_list(
+            "# popular\nlodash\n@babel/core   # scoped\nnpm:express\n\npypi:Typing_Extensions\n",
+        );
+        assert_eq!(
+            list,
+            [
+                (Ecosystem::Npm, "lodash".to_string()),
+                (Ecosystem::Npm, "@babel/core".to_string()),
+                (Ecosystem::Npm, "express".to_string()),
+                (Ecosystem::PyPI, "typing-extensions".to_string()),
+            ]
+        );
     }
 
     #[test]
