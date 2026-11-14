@@ -244,7 +244,16 @@ fn exec_label(args: &str) -> Option<String> {
     let mut label = basename(program).to_string();
     for arg in argv.iter().skip(1) {
         label.push(' ');
-        label.push_str(arg);
+        // Inline scripts (`python -c`, `sh -c`) can span many lines; the
+        // first one identifies them well enough.
+        let arg = arg.trim();
+        match arg.split_once('\n') {
+            Some((first, _)) => {
+                label.push_str(first.trim_end());
+                label.push('…');
+            }
+            None => label.push_str(arg),
+        }
     }
     Some(truncate(&norm(&label)))
 }
@@ -267,6 +276,13 @@ fn path_arg(args: &str, cwd: &str, index: usize) -> Option<String> {
     }
     if tok.value.starts_with('/') {
         return Some(clean(&tok.value));
+    }
+    // A relative path next to a bare descriptor number means strace could not
+    // tell which directory that descriptor is. Guessing would invent a path.
+    let before = args[..tok.start].trim_end().trim_end_matches(',');
+    let previous = before.rsplit([',', '(']).next().unwrap_or("").trim();
+    if !previous.is_empty() && previous.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
     }
     let base = strace::dirfd_before(args, tok.start)
         .filter(|d| d.starts_with('/'))
@@ -382,6 +398,15 @@ mod tests {
     #[test]
     fn resolves_paths() {
         assert_eq!(clean("/a/b/../c/./d"), "/a/c/d");
+        // A descriptor strace could not resolve gives no path at all.
+        assert_eq!(path_arg(r#"7, "LICENSE", 0"#, "/work", 0), None);
+        assert_eq!(
+            exec_label(
+                r#""/usr/bin/python3", ["python3", "-c", "\nimport os\nos.getcwd()\n", "x"], 0x0"#
+            )
+            .as_deref(),
+            Some("python3 -c import os… x")
+        );
         assert_eq!(
             path_arg(r#"AT_FDCWD, "x/y", O_RDONLY"#, "/work", 0).unwrap(),
             "/work/x/y"

@@ -119,3 +119,6 @@ jobs:
           set -e
           cat sdist.json
           jq -e '.findings[] | select(.title == "has install script")' sdist.json
+          # pip cleaning up its own build directory must not look like the
+          # package deleting files in the project.
+          jq -e '[.findings[] | select(.title == "deletes file" or .title == "writes file")] | length == 0' sdist.json

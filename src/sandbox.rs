@@ -357,6 +357,10 @@ impl<'a> Container<'a> {
                 "SETGID",
                 "--cap-add",
                 "SYS_PTRACE",
+                // strace resolves file descriptors through /proc/<pid>/fd,
+                // which belongs to the observed user.
+                "--cap-add",
+                "DAC_READ_SEARCH",
                 "--security-opt",
                 "no-new-privileges",
                 "--pids-limit",
