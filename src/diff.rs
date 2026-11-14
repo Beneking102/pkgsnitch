@@ -21,7 +21,7 @@ pub fn compare(old: &Profile, new: &Profile, mode: Mode) -> Report {
 
     let added: Vec<&Behavior> = after.difference(&before).copied().collect();
     for b in &added {
-        if is_shell_wrapper(b, &added) {
+        if is_shell_wrapper(b, &added) || is_shebang_reexec(b, &added) {
             continue;
         }
         let (severity, why) = rules::rate(b);
@@ -72,6 +72,31 @@ fn is_shell_wrapper(b: &Behavior, added: &[&Behavior]) -> bool {
         && added
             .iter()
             .any(|x| x.kind == Kind::Exec && x.phase == b.phase && x.actor.starts_with(&b.target))
+}
+
+/// A script started by name (`node-gyp rebuild`) shows up a second time when
+/// its shebang line hands it to the interpreter (`node …/node-gyp rebuild`).
+/// Keep the command as it was called.
+fn is_shebang_reexec(b: &Behavior, added: &[&Behavior]) -> bool {
+    if b.kind != Kind::Exec {
+        return false;
+    }
+    let mut words = b.target.splitn(3, ' ');
+    let (Some(interpreter), Some(script)) = (words.next(), words.next()) else {
+        return false;
+    };
+    let name = script.rsplit('/').next().unwrap_or(script);
+    let called_as = match words.next() {
+        Some(args) => format!("{name} {args}"),
+        None => name.to_string(),
+    };
+    interpreter != name
+        && added.iter().any(|x| {
+            x.kind == Kind::Exec
+                && x.phase == b.phase
+                && x.target == called_as
+                && b.actor.starts_with(&x.target)
+        })
 }
 
 fn behavior_finding(b: &Behavior, change: Change, severity: Severity, why: String) -> Finding {
@@ -249,6 +274,25 @@ mod tests {
             .map(|f| f.target)
             .collect();
         assert_eq!(targets, ["node setup.js", "sh -c true"]);
+
+        // A tool re-executed through its shebang is reported once, as called.
+        b.behaviors = vec![
+            exec("node-gyp rebuild", "npm rebuild"),
+            exec(
+                "node node_modules/.bin/node-gyp rebuild",
+                "node-gyp rebuild (in demo)",
+            ),
+            exec(
+                "python3 -c x",
+                "node node_modules/.bin/node-gyp rebuild (in demo)",
+            ),
+        ];
+        let targets: Vec<_> = compare(&a, &b, Mode::Update)
+            .findings
+            .into_iter()
+            .map(|f| f.target)
+            .collect();
+        assert_eq!(targets, ["node-gyp rebuild", "python3 -c x"]);
     }
 
     fn profile(version: &str, behaviors: &[(Kind, &str)]) -> Profile {

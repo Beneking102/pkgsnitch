@@ -73,7 +73,9 @@ const SECRETS: &[Secret] = &[
     secret("~/.config/gh", "GitHub CLI token", Severity::Critical),
     secret("~/.netrc", "netrc credentials", Severity::Critical),
     secret("~/.gnupg", "GPG keys", Severity::Critical),
-    secret("~/.npmrc", "npm auth token", Severity::Critical),
+    // Many tools read this for registry settings, so it rates below the
+    // files that hold nothing but credentials.
+    secret("~/.npmrc", "npm config and auth token", Severity::High),
     secret("~/.pypirc", "PyPI token", Severity::Critical),
     secret("~/.config/solana", "crypto wallet", Severity::Critical),
     secret("~/.ethereum", "crypto wallet", Severity::Critical),
@@ -130,7 +132,11 @@ pub fn write_expected(path: &str) -> bool {
         || ZONES.iter().any(|z| path.starts_with(z))
         || matches!(
             path,
-            "/work/node_modules" | "/work/package.json" | "/work/package-lock.json"
+            "/work/node_modules"
+                | "/work/package.json"
+                | "/work/package-lock.json"
+                | "/home/dev/.cache"
+                | "/home/dev/.npm"
         )
 }
 
@@ -259,7 +265,11 @@ mod tests {
             sensitive("/home/dev/.ssh/id_rsa").unwrap().1,
             Severity::Critical
         );
-        assert_eq!(sensitive("~/.npmrc").unwrap().0, "npm auth token");
+        assert_eq!(
+            sensitive("~/.npmrc").unwrap(),
+            ("npm config and auth token", Severity::High)
+        );
+        assert!(write_expected("/home/dev/.cache"));
         assert_eq!(
             sensitive("/work/.env.production").unwrap().0,
             "environment secrets"
